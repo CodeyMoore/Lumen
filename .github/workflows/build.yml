@@ -1,0 +1,34 @@
+name: Build IPA
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unzip project
+        run: unzip -q Lumen-iOS12.zip
+      - name: Select Xcode 16
+        run: |
+          XC=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build
+        working-directory: lumen
+        run: |
+          set -o pipefail
+          xcodegen generate
+          xcodebuild -project Lumen.xcodeproj -scheme Lumen \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Lumen.app Payload/
+          zip -qry Lumen.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lumen-ipa
+          path: lumen/Lumen.ipa
