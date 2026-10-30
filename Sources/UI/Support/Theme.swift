@@ -108,6 +108,62 @@ enum Icons {
         }
     }
 
+    static let bigPlay: UIImage = make(44) {
+        let p = UIBezierPath()
+        p.move(to: CGPoint(x: 11, y: 5))
+        p.addLine(to: CGPoint(x: 39, y: 22))
+        p.addLine(to: CGPoint(x: 11, y: 39))
+        p.close()
+        p.fill()
+    }
+
+    static let bigPause: UIImage = make(44) {
+        UIBezierPath(roundedRect: CGRect(x: 9, y: 6, width: 9, height: 32), cornerRadius: 2).fill()
+        UIBezierPath(roundedRect: CGRect(x: 26, y: 6, width: 9, height: 32), cornerRadius: 2).fill()
+    }
+
+    static let close: UIImage = make(22) {
+        let p = UIBezierPath()
+        p.lineWidth = 2.4
+        p.lineCapStyle = .round
+        p.move(to: CGPoint(x: 4, y: 4))
+        p.addLine(to: CGPoint(x: 18, y: 18))
+        p.move(to: CGPoint(x: 18, y: 4))
+        p.addLine(to: CGPoint(x: 4, y: 18))
+        p.stroke()
+    }
+
+    static let compass: UIImage = make {
+        let c = UIBezierPath(ovalIn: CGRect(x: 3, y: 3, width: 19, height: 19))
+        c.lineWidth = 2
+        c.stroke()
+        let p = UIBezierPath()
+        p.move(to: CGPoint(x: 16.5, y: 8.5))
+        p.addLine(to: CGPoint(x: 14, y: 14))
+        p.addLine(to: CGPoint(x: 8.5, y: 16.5))
+        p.addLine(to: CGPoint(x: 11, y: 11))
+        p.close()
+        p.fill()
+    }
+
+    static let gear: UIImage = make {
+        let c = UIBezierPath(ovalIn: CGRect(x: 8.5, y: 8.5, width: 8, height: 8))
+        c.lineWidth = 2
+        c.stroke()
+        let p = UIBezierPath()
+        p.lineWidth = 2.6
+        p.lineCapStyle = .round
+        for i in 0..<8 {
+            let a = CGFloat(i) * .pi / 4
+            p.move(to: CGPoint(x: 12.5 + cos(a) * 6.5, y: 12.5 + sin(a) * 6.5))
+            p.addLine(to: CGPoint(x: 12.5 + cos(a) * 9.5, y: 12.5 + sin(a) * 9.5))
+        }
+        p.stroke()
+        let ring = UIBezierPath(ovalIn: CGRect(x: 6, y: 6, width: 13, height: 13))
+        ring.lineWidth = 2
+        ring.stroke()
+    }
+
     static let play: UIImage = make(16) {
         let p = UIBezierPath()
         p.move(to: CGPoint(x: 3, y: 1.5))

@@ -1,42 +1,71 @@
 name: Build IPA
+
 on:
   push:
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Find project
-        run: |
-          shopt -s nullglob
-          ls -la
-          if ! find . -name project.yml -not -path './.git/*' | grep -q .; then
-            for z in *.zip; do echo "Unzipping $z"; unzip -q -o "$z"; done
-          fi
-          F=$(find . -name project.yml -not -path './.git/*' | head -1)
-          if [ -z "$F" ]; then echo "::error::No project found. Upload Lumen-iOS12.zip to the repo."; exit 1; fi
-          echo "PROJECT_DIR=$(dirname "$F")" >> "$GITHUB_ENV"
+
+      # Xcode 16 still allows an iOS 12.0 deployment target.
       - name: Select Xcode 16
         run: |
           XC=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
           xcodebuild -version
-      - name: Install XcodeGen
-        run: brew install xcodegen
-      - name: Build
-        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Install tools
+        run: |
+          brew install xcodegen
+          which pod || sudo gem install cocoapods
+
+      - name: Build (unsigned)
         run: |
           set -o pipefail
-          xcodegen generate
-          xcodebuild -project Lumen.xcodeproj -scheme Lumen \
-            -configuration Release -sdk iphoneos \
-            -destination 'generic/platform=iOS' -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build 2>&1 | grep -E "error:|\*\* BUILD"
+          {
+            xcodegen generate &&
+            pod install --repo-update &&
+            xcodebuild \
+              -workspace Lumen.xcworkspace \
+              -scheme Lumen \
+              -configuration Release \
+              -sdk iphoneos \
+              -destination 'generic/platform=iOS' \
+              -derivedDataPath build \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+              build
+          } 2>&1 | tee build.log | grep -E "error:|\[!\]|\*\* BUILD"
+
+      - name: Package IPA
+        run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/Lumen.app Payload/
           zip -qry Lumen.ipa Payload
+          ls -lh Lumen.ipa
+
       - uses: actions/upload-artifact@v4
         with:
           name: Lumen-ipa
-          path: ${{ env.PROJECT_DIR }}/Lumen.ipa
+          path: Lumen.ipa
+
+      # Saves compile errors to the "build-log" branch so they can be read without the Actions UI.
+      - name: Publish build errors
+        if: failure()
+        run: |
+          touch build.log
+          grep -E "error:|\[!\]" build.log | sort -u | head -100 > errors.txt || true
+          tail -n 200 build.log > tail.txt || true
+          git config user.name "lumen-ci"
+          git config user.email "lumen-ci@users.noreply.github.com"
+          git checkout --orphan build-log
+          git rm -rf --cached . > /dev/null
+          git add -f errors.txt tail.txt
+          git commit -m "Build errors for ${GITHUB_SHA}"
+          git push -f origin build-log

@@ -16,7 +16,17 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window.rootViewController = MainTabBarController()
         window.makeKeyAndVisible()
         self.window = window
+
+        DownloadManager.shared.reconnect()
+        AccountSync.pullProgress()
         return true
+    }
+
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == DownloadManager.sessionIdentifier else { completionHandler(); return }
+        DownloadManager.shared.backgroundCompletionHandler = completionHandler
+        DownloadManager.shared.reconnect()
     }
 
     /// Handles stremio://…/manifest.json links (the "Install" buttons on addon pages).
@@ -29,15 +39,16 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 final class MainTabBarController: UITabBarController {
-    private let addonsController = AddonsViewController()
+    private let settingsIndex = 4
 
     override func viewDidLoad() {
         super.viewDidLoad()
         viewControllers = [
             wrap(HomeViewController(), title: "Home", icon: Icons.home),
+            wrap(DiscoverViewController(), title: "Discover", icon: Icons.compass),
             wrap(SearchViewController(), title: "Search", icon: Icons.search),
             wrap(LibraryViewController(), title: "Library", icon: Icons.library),
-            wrap(addonsController, title: "Addons", icon: Icons.addons),
+            wrap(SettingsViewController(), title: "Settings", icon: Icons.gear),
         ]
     }
 
@@ -50,10 +61,13 @@ final class MainTabBarController: UITabBarController {
 
     func installAddon(from urlString: String) {
         let show = { [weak self] in
-            guard let self = self else { return }
-            self.selectedIndex = 3
-            (self.viewControllers?[3] as? UINavigationController)?.popToRootViewController(animated: false)
-            self.addonsController.promptInstall(prefill: urlString)
+            guard let self = self,
+                  let nav = self.viewControllers?[self.settingsIndex] as? UINavigationController else { return }
+            self.selectedIndex = self.settingsIndex
+            nav.popToRootViewController(animated: false)
+            let addons = AddonsViewController()
+            nav.pushViewController(addons, animated: false)
+            addons.promptInstall(prefill: urlString)
         }
         if presentedViewController != nil {
             dismiss(animated: true, completion: show)

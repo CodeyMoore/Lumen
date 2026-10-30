@@ -1,29 +1,32 @@
 import UIKit
 
 final class StreamsViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
-    private enum State {
-        case loading
-        case loaded([StreamItem])
-        case failed
-    }
-
-    private struct Group {
-        let addon: Addon
-        var state: State
-    }
-
     private let ref: MediaRef
     private let videoId: String
     private let label: String?
-    private var groups: [Group] = []
+    private let meta: MetaItem?
 
-    private let tableView = UITableView(frame: .zero, style: .grouped)
+    private var all: [RankedStream] = []
+    private var shown: [RankedStream] = []
+    private var pending = 0
+    private var total = 0
+    private var filter: QualityFilter = .all
+    private var sort: StreamSort = .quality
+    private var autoPlayed = false
+
+    private let tableView = UITableView(frame: .zero, style: .plain)
+    private let header = UIView()
+    private let filterControl = UISegmentedControl(items: QualityFilter.allCases.map { $0.title })
+    private let sortButton = UIButton(type: .system)
+    private let bestButton = UIButton(type: .custom)
+    private let statusLabel = UILabel()
     private let messageLabel = UILabel()
 
-    init(ref: MediaRef, videoId: String, label: String?) {
+    init(ref: MediaRef, videoId: String, label: String?, meta: MetaItem?) {
         self.ref = ref
         self.videoId = videoId
         self.label = label
+        self.meta = meta
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -39,7 +42,7 @@ final class StreamsViewController: UIViewController, UITableViewDataSource, UITa
         tableView.separatorColor = UIColor(white: 1, alpha: 0.08)
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.estimatedRowHeight = 70
+        tableView.estimatedRowHeight = 76
         tableView.rowHeight = UITableView.automaticDimension
         tableView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tableView)
@@ -61,113 +64,206 @@ final class StreamsViewController: UIViewController, UITableViewDataSource, UITa
             messageLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
         ])
 
+        buildHeader()
         load()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let size = header.systemLayoutSizeFitting(CGSize(width: tableView.bounds.width, height: 0),
+                                                  withHorizontalFittingPriority: .required,
+                                                  verticalFittingPriority: .fittingSizeLevel)
+        if header.frame.height != size.height || header.frame.width != tableView.bounds.width {
+            header.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: size.height)
+            tableView.tableHeaderView = header
+        }
+    }
+
+    private func buildHeader() {
+        filterControl.selectedSegmentIndex = 0
+        filterControl.addTarget(self, action: #selector(filterChanged), for: .valueChanged)
+
+        sortButton.setTitle("Sort: \(sort.title) ▾", for: .normal)
+        sortButton.tintColor = Theme.accent
+        sortButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        sortButton.addTarget(self, action: #selector(sortTapped), for: .touchUpInside)
+
+        bestButton.setTitle("  Play Best", for: .normal)
+        bestButton.setImage(Icons.play, for: .normal)
+        bestButton.tintColor = .white
+        bestButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        bestButton.backgroundColor = Theme.accent
+        bestButton.layer.cornerRadius = 8
+        bestButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 14)
+        bestButton.addTarget(self, action: #selector(bestTapped), for: .touchUpInside)
+        bestButton.isEnabled = false
+        bestButton.alpha = 0.5
+
+        statusLabel.font = .systemFont(ofSize: 13)
+        statusLabel.textColor = Theme.secondaryText
+
+        let row = UIStackView(arrangedSubviews: [sortButton, UIView(), bestButton])
+        row.alignment = .center
+        let stack = UIStackView(arrangedSubviews: [filterControl, row, statusLabel])
+        stack.axis = .vertical
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: header.topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -16),
+        ])
+        tableView.tableHeaderView = header
+    }
+
     private func load() {
-        let addons = AddonStore.shared.addons(supporting: "stream", type: ref.type, id: videoId)
+        let addons = StreamFetcher.addons(type: ref.type, videoId: videoId)
         guard !addons.isEmpty else {
-            messageLabel.text = "None of your addons provide streams for this.\n\nInstall a stream addon from the Addons tab."
+            messageLabel.text = "None of your addons provide streams for this.\n\nInstall a stream addon in Settings → Addons."
             messageLabel.isHidden = false
+            tableView.isHidden = true
             return
         }
-        groups = addons.map { Group(addon: $0, state: .loading) }
-        tableView.reloadData()
-
-        for (i, addon) in addons.enumerated() {
-            StremioAPI.shared.streams(addon: addon, type: ref.type, id: videoId) { [weak self] result in
-                guard let self = self, self.groups.indices.contains(i) else { return }
-                switch result {
-                case .success(let streams): self.groups[i].state = .loaded(streams)
-                case .failure: self.groups[i].state = .failed
+        total = addons.count
+        pending = addons.count
+        updateStatus()
+        var byAddon: [Int: [StreamItem]] = [:]
+        StreamFetcher.fetch(type: ref.type, videoId: videoId, partial: { [weak self] i, result in
+            guard let self = self else { return }
+            self.pending -= 1
+            if case .success(let s) = result { byAddon[i] = s }
+            var out: [RankedStream] = []
+            var order = 0
+            for (j, addon) in addons.enumerated() {
+                for s in byAddon[j] ?? [] {
+                    out.append(RankedStream(stream: s, addon: addon, order: order))
+                    order += 1
                 }
-                self.tableView.reloadSections(IndexSet(integer: i), with: .fade)
             }
+            self.all = out
+            self.refresh()
+        }, done: { [weak self] _ in
+            self?.pending = 0
+            self?.refresh()
+            self?.autoPlayIfNeeded()
+        })
+    }
+
+    private func refresh() {
+        let settings = AppSettings.shared
+        let visible = all.filter { r in
+            if settings.hideTorrents, case .torrent = r.stream.kind { return false }
+            return filter.matches(r.stream.quality) || filter == .all
         }
+        shown = StreamRanker.sorted(visible, by: sort)
+        tableView.reloadData()
+        let hasBest = StreamRanker.best(all) != nil
+        bestButton.isEnabled = hasBest
+        bestButton.alpha = hasBest ? 1 : 0.5
+        updateStatus()
+    }
+
+    private func updateStatus() {
+        if pending > 0 {
+            statusLabel.text = "Loading from \(pending) of \(total) addon\(total == 1 ? "" : "s")…"
+        } else if shown.isEmpty {
+            statusLabel.text = all.isEmpty ? "No streams found." : "No streams match this filter."
+        } else {
+            statusLabel.text = "\(shown.count) stream\(shown.count == 1 ? "" : "s")"
+        }
+    }
+
+    private func autoPlayIfNeeded() {
+        guard AppSettings.shared.autoPlayBest, !autoPlayed, view.window != nil,
+              let best = StreamRanker.best(all) else { return }
+        autoPlayed = true
+        StreamActions.play(best, context: playbackContext(for: best), from: self, source: bestButton)
+    }
+
+    private func playbackContext(for r: RankedStream) -> PlaybackContext {
+        PlaybackContext(ref: ref, videoId: videoId, label: label, meta: meta,
+                        addonId: r.addon.manifest.id, bingeGroup: r.stream.bingeGroup)
+    }
+
+    @objc private func filterChanged() {
+        filter = QualityFilter(rawValue: filterControl.selectedSegmentIndex) ?? .all
+        refresh()
+    }
+
+    @objc private func sortTapped() {
+        let sheet = UIAlertController(title: "Sort Streams", message: nil, preferredStyle: .actionSheet)
+        for s in StreamSort.allCases {
+            sheet.addAction(UIAlertAction(title: (s == sort ? "✓ " : "") + s.title, style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                self.sort = s
+                self.sortButton.setTitle("Sort: \(s.title) ▾", for: .normal)
+                self.refresh()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        presentSheet(sheet, from: sortButton)
+    }
+
+    @objc private func bestTapped() {
+        guard let best = StreamRanker.best(all) else { return }
+        StreamActions.play(best, context: playbackContext(for: best), from: self, source: bestButton)
     }
 
     // MARK: Table
 
-    func numberOfSections(in tableView: UITableView) -> Int { groups.count }
-
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        if case .loaded(let streams) = groups[section].state { return max(1, streams.count) }
-        return 1
-    }
-
-    func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        groups[section].addon.manifest.name
-    }
-
-    func tableView(_ tableView: UITableView, willDisplayHeaderView view: UIView, forSection section: Int) {
-        (view as? UITableViewHeaderFooterView)?.textLabel?.textColor = Theme.secondaryText
-    }
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { shown.count }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "stream")
             ?? UITableViewCell(style: .subtitle, reuseIdentifier: "stream")
-        cell.backgroundColor = Theme.surface
+        cell.backgroundColor = Theme.background
         let selected = UIView()
-        selected.backgroundColor = Theme.surfaceHigh
+        selected.backgroundColor = Theme.surface
         cell.selectedBackgroundView = selected
         cell.textLabel?.numberOfLines = 0
         cell.textLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
         cell.textLabel?.textColor = Theme.text
         cell.detailTextLabel?.numberOfLines = 0
-        cell.detailTextLabel?.font = .systemFont(ofSize: 13)
+        cell.detailTextLabel?.font = .systemFont(ofSize: 12)
         cell.detailTextLabel?.textColor = Theme.secondaryText
-        cell.accessoryView = nil
-        cell.selectionStyle = .default
-        cell.contentView.alpha = 1
+        cell.accessoryType = .detailButton
+        cell.tintColor = Theme.accent
 
-        switch groups[indexPath.section].state {
-        case .loading:
-            cell.textLabel?.text = "Loading…"
-            cell.detailTextLabel?.text = nil
-            let spinner = UIActivityIndicatorView(style: .white)
-            spinner.startAnimating()
-            cell.accessoryView = spinner
-            cell.selectionStyle = .none
-        case .failed:
-            cell.textLabel?.text = "Couldn't load streams"
-            cell.detailTextLabel?.text = "The addon didn't respond."
-            cell.selectionStyle = .none
-        case .loaded(let streams):
-            guard !streams.isEmpty else {
-                cell.textLabel?.text = "No streams found"
-                cell.detailTextLabel?.text = nil
-                cell.selectionStyle = .none
-                return cell
-            }
-            let s = streams[indexPath.row]
-            cell.textLabel?.text = s.displayName
-            var detail = s.title ?? ""
-            switch s.kind {
-            case .torrent:
-                detail += (detail.isEmpty ? "" : "\n") + "Torrent — not playable in Lumen"
-                cell.contentView.alpha = 0.5
-            case .youtube:
-                detail += (detail.isEmpty ? "" : "\n") + "Opens in YouTube"
-            case .external:
-                detail += (detail.isEmpty ? "" : "\n") + "Opens externally"
-            default:
-                break
-            }
-            cell.detailTextLabel?.text = detail.isEmpty ? nil : detail
+        let r = shown[indexPath.row]
+        let s = r.stream
+        var badges = [s.qualityLabel, s.sizeLabel, r.addon.manifest.name].compactMap { $0 }
+        if AppSettings.shared.rememberAddon, r.addon.manifest.id == AppSettings.shared.preferredAddonId {
+            badges.append("★")
         }
+        cell.textLabel?.text = badges.joined(separator: "  ·  ")
+        var detail = s.displayName
+        if let t = s.title { detail += "\n" + t }
+        switch s.kind {
+        case .torrent: detail += "\nTorrent — not playable in Lumen"
+        case .youtube: detail += "\nOpens in YouTube"
+        case .external: detail += "\nOpens externally"
+        default: break
+        }
+        cell.detailTextLabel?.text = detail
+        cell.contentView.alpha = s.isDirect ? 1 : 0.55
         return cell
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard case .loaded(let streams) = groups[indexPath.section].state,
-              streams.indices.contains(indexPath.row) else { return }
-        StreamActions.handle(streams[indexPath.row], ref: ref, videoId: videoId, label: label,
-                             from: self, source: tableView.cellForRow(at: indexPath))
+        let r = shown[indexPath.row]
+        StreamActions.play(r, context: playbackContext(for: r), from: self, source: tableView.cellForRow(at: indexPath))
+    }
+
+    func tableView(_ tableView: UITableView, accessoryButtonTappedForRowWith indexPath: IndexPath) {
+        let r = shown[indexPath.row]
+        StreamActions.moreOptions(r, context: playbackContext(for: r), from: self, source: tableView.cellForRow(at: indexPath))
     }
 }
 
-// MARK: - Stream actions & external players
+// MARK: - Players & actions
 
 enum ExternalPlayer: CaseIterable {
     case vlc, infuse, nplayer, outplayer
@@ -196,41 +292,32 @@ enum ExternalPlayer: CaseIterable {
         guard let target = url(for: stream) else { return }
         let name = self.name
         UIApplication.shared.open(target, options: [:]) { ok in
-            if !ok { vc?.showAlert("\(name) isn't installed", "Install \(name) from the App Store, or pick another player.") }
+            if !ok { vc?.showAlert("\(name) isn't installed", "Install \(name) from the App Store, or pick another player in Settings.") }
         }
     }
 }
 
 enum StreamActions {
-    static func handle(_ stream: StreamItem, ref: MediaRef, videoId: String, label: String?,
-                       from vc: UIViewController, source: UIView?) {
+    /// Plays with the player chosen in Settings.
+    static func play(_ r: RankedStream, context: PlaybackContext, from vc: UIViewController, source: UIView?) {
+        let stream = r.stream
         switch stream.kind {
         case .direct(let url):
-            let sheet = UIAlertController(title: stream.displayName, message: nil, preferredStyle: .actionSheet)
-            sheet.addAction(UIAlertAction(title: "Play", style: .default) { _ in
-                let player = PlayerViewController(ref: ref, videoId: videoId, label: label,
-                                                  url: url, headers: stream.headers)
+            if AppSettings.shared.rememberAddon { AppSettings.shared.preferredAddonId = r.addon.manifest.id }
+            let choice = AppSettings.shared.player
+            if let external = choice.external {
+                external.open(url, from: vc)
+            } else {
+                let player = PlayerViewController(context: context, url: url, headers: stream.headers,
+                                                  engine: choice == .system ? .avPlayer : .vlc)
                 vc.present(player, animated: true)
-            })
-            for p in ExternalPlayer.allCases {
-                sheet.addAction(UIAlertAction(title: "Open in \(p.name)", style: .default) { _ in
-                    p.open(url, from: vc)
-                })
             }
-            sheet.addAction(UIAlertAction(title: "Copy Link", style: .default) { _ in
-                UIPasteboard.general.string = url.absoluteString
-            })
-            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-            vc.presentSheet(sheet, from: source)
-
         case .youtube(let id):
             if let url = URL(string: "https://www.youtube.com/watch?v=\(StremioAPI.encode(id))") {
                 UIApplication.shared.open(url, options: [:])
             }
-
         case .external(let url):
             UIApplication.shared.open(url, options: [:])
-
         case .torrent(let hash):
             let alert = UIAlertController(
                 title: "Torrent stream",
@@ -241,9 +328,36 @@ enum StreamActions {
             })
             alert.addAction(UIAlertAction(title: "OK", style: .cancel))
             vc.topPresenter.present(alert, animated: true)
-
         case .unsupported:
             vc.showAlert("Unsupported stream", "Lumen doesn't know how to open this stream.")
         }
+    }
+
+    /// Every way to open a stream, plus download and copy.
+    static func moreOptions(_ r: RankedStream, context: PlaybackContext, from vc: UIViewController, source: UIView?) {
+        guard case .direct(let url) = r.stream.kind else {
+            play(r, context: context, from: vc, source: source)
+            return
+        }
+        let sheet = UIAlertController(title: r.stream.displayName, message: nil, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "Play with VLC Engine", style: .default) { _ in
+            vc.present(PlayerViewController(context: context, url: url, headers: r.stream.headers, engine: .vlc), animated: true)
+        })
+        sheet.addAction(UIAlertAction(title: "Play with iOS Player", style: .default) { _ in
+            vc.present(PlayerViewController(context: context, url: url, headers: r.stream.headers, engine: .avPlayer), animated: true)
+        })
+        for p in ExternalPlayer.allCases {
+            sheet.addAction(UIAlertAction(title: "Open in \(p.name)", style: .default) { _ in p.open(url, from: vc) })
+        }
+        sheet.addAction(UIAlertAction(title: "Download", style: .default) { _ in
+            DownloadManager.shared.start(ref: context.ref, videoId: context.videoId, label: context.label,
+                                         url: url, headers: r.stream.headers)
+            vc.showAlert("Downloading", "Track it in Library → Downloads.")
+        })
+        sheet.addAction(UIAlertAction(title: "Copy Link", style: .default) { _ in
+            UIPasteboard.general.string = url.absoluteString
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        vc.presentSheet(sheet, from: source)
     }
 }

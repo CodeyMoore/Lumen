@@ -51,6 +51,18 @@ final class AddonStore {
         save()
     }
 
+    /// Adds addons that aren't installed yet (by manifest id). Returns how many were added.
+    @discardableResult
+    func merge(_ incoming: [Addon]) -> Int {
+        var added = 0
+        for a in incoming where !addons.contains(where: { $0.manifest.id == a.manifest.id }) {
+            addons.append(a)
+            added += 1
+        }
+        if added > 0 { save() }
+        return added
+    }
+
     func remove(at index: Int) {
         guard addons.indices.contains(index) else { return }
         addons.remove(at: index)
@@ -113,7 +125,28 @@ struct LibraryItem: Codable {
 struct VideoProgress: Codable {
     let position: Double
     let duration: Double
+    /// True when only a percentage is known (e.g. imported from Trakt): position/duration is a fraction.
+    var isFraction: Bool? = nil
     var fraction: Double { duration > 0 ? min(1, position / duration) : 0 }
+
+    /// Where to resume, given the real duration once playback knows it.
+    func resumeTime(actualDuration: Double) -> Double? {
+        if isFraction == true {
+            return actualDuration > 0 ? fraction * actualDuration : nil
+        }
+        return position
+    }
+}
+
+/// Progress or library entries pulled from an account service.
+struct ImportedProgress {
+    let ref: MediaRef
+    let videoId: String
+    let label: String?
+    let position: Double
+    let duration: Double
+    let isFraction: Bool
+    let updatedAt: Date
 }
 
 struct WatchState: Codable {
@@ -164,15 +197,62 @@ final class LibraryStore {
     func toggle(_ ref: MediaRef) {
         if let i = data.items.firstIndex(where: { $0.ref.id == ref.id }) {
             data.items.remove(at: i)
+            AccountSync.libraryChanged(ref, added: false)
         } else {
             data.items.append(LibraryItem(ref: ref, addedAt: Date()))
+            AccountSync.libraryChanged(ref, added: true)
         }
         save()
     }
 
     func removeFromLibrary(_ id: String) {
+        if let item = data.items.first(where: { $0.ref.id == id }) {
+            AccountSync.libraryChanged(item.ref, added: false)
+        }
         data.items.removeAll { $0.ref.id == id }
         save()
+    }
+
+    /// Adds items that aren't already in the library. Returns how many were added.
+    @discardableResult
+    func importLibrary(_ items: [LibraryItem]) -> Int {
+        var added = 0
+        for item in items where !data.items.contains(where: { $0.ref.id == item.ref.id }) {
+            data.items.append(item)
+            added += 1
+        }
+        if added > 0 { save() }
+        return added
+    }
+
+    /// Merges progress from a sync service, keeping whichever side is newer.
+    @discardableResult
+    func importProgress(_ entries: [ImportedProgress]) -> Int {
+        var changed = 0
+        for e in entries where e.duration > 0 && e.position > 0 {
+            let fraction = e.position / e.duration
+            if fraction >= 0.92 {
+                data.watched.insert(e.videoId)
+                if let w = data.watching[e.ref.id], w.videoId == e.videoId, w.updatedAt < e.updatedAt {
+                    data.watching[e.ref.id] = nil
+                }
+                changed += 1
+                continue
+            }
+            if let existing = data.watching[e.ref.id], existing.updatedAt >= e.updatedAt { continue }
+            // Keep a better title/poster if we already have one.
+            let current = data.watching[e.ref.id]?.ref
+            let ref = MediaRef(id: e.ref.id, type: e.ref.type,
+                               name: e.ref.name.isEmpty ? (current?.name ?? e.ref.name) : e.ref.name,
+                               poster: e.ref.poster ?? current?.poster)
+            data.progress[e.videoId] = VideoProgress(position: e.position, duration: e.duration,
+                                                     isFraction: e.isFraction ? true : nil)
+            data.watching[e.ref.id] = WatchState(ref: ref, videoId: e.videoId, videoLabel: e.label,
+                                                 position: e.position, duration: e.duration, updatedAt: e.updatedAt)
+            changed += 1
+        }
+        if changed > 0 { save() }
+        return changed
     }
 
     // Progress
@@ -188,6 +268,24 @@ final class LibraryStore {
     func position(for videoId: String) -> Double { data.progress[videoId]?.position ?? 0 }
 
     func isWatched(_ videoId: String) -> Bool { data.watched.contains(videoId) }
+
+    /// Updates the stored title/poster for an item everywhere it appears.
+    func updateDetails(_ ref: MediaRef) {
+        guard !ref.name.isEmpty else { return }
+        if let w = data.watching[ref.id] {
+            data.watching[ref.id] = WatchState(ref: ref, videoId: w.videoId, videoLabel: w.videoLabel,
+                                               position: w.position, duration: w.duration, updatedAt: w.updatedAt)
+        }
+        if let i = data.items.firstIndex(where: { $0.ref.id == ref.id }) {
+            data.items[i] = LibraryItem(ref: ref, addedAt: data.items[i].addedAt)
+        }
+        save()
+    }
+
+    func markWatched(_ videoId: String) {
+        data.watched.insert(videoId)
+        save()
+    }
 
     func updateProgress(ref: MediaRef, videoId: String, label: String?, position: Double, duration: Double) {
         if duration > 0 && position / duration >= 0.92 {

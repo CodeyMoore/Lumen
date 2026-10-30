@@ -78,6 +78,7 @@ struct ResourceDescriptor {
 struct ExtraDescriptor {
     let name: String
     let isRequired: Bool
+    let options: [String]
 }
 
 struct CatalogDescriptor {
@@ -88,6 +89,17 @@ struct CatalogDescriptor {
 
     var requiresExtra: Bool { extras.contains { $0.isRequired } }
     var supportsSearch: Bool { extras.contains { $0.name == "search" } }
+    var supportsSkip: Bool { extras.contains { $0.name == "skip" } }
+
+    /// Extras with a fixed list of choices (genre, year…) shown as filters in Discover.
+    var filterExtras: [ExtraDescriptor] {
+        extras.filter { !$0.options.isEmpty && $0.name != "skip" && $0.name != "search" }
+    }
+
+    /// Browsable in Discover: every required extra can be satisfied by picking an option.
+    var isBrowsable: Bool {
+        !extras.contains { $0.isRequired && ($0.options.isEmpty || $0.name == "search") }
+    }
 
     var displayTitle: String {
         let plural = TypeNames.plural(type)
@@ -136,12 +148,13 @@ struct Manifest {
             guard let type = JSON.string(c["type"]), let cid = JSON.string(c["id"]) else { continue }
             var extras = JSON.dicts(c["extra"]).compactMap { e -> ExtraDescriptor? in
                 guard let n = JSON.string(e["name"]) else { return nil }
-                return ExtraDescriptor(name: n, isRequired: JSON.bool(e["isRequired"]))
+                return ExtraDescriptor(name: n, isRequired: JSON.bool(e["isRequired"]),
+                                       options: JSON.strings(e["options"]))
             }
             // Legacy manifest format
             let required = JSON.strings(c["extraRequired"])
             for s in JSON.strings(c["extraSupported"]) where !extras.contains(where: { $0.name == s }) {
-                extras.append(ExtraDescriptor(name: s, isRequired: required.contains(s)))
+                extras.append(ExtraDescriptor(name: s, isRequired: required.contains(s), options: []))
             }
             cats.append(CatalogDescriptor(type: type, id: cid, name: JSON.string(c["name"]) ?? cid, extras: extras))
         }
@@ -279,6 +292,11 @@ struct StreamItem {
     let infoHash: String?
     let externalUrl: String?
     let headers: [String: String]
+    let bingeGroup: String?
+    let filename: String?
+    /// Vertical resolution parsed from the stream's labels (2160, 1080…); 0 if unknown.
+    let quality: Int
+    let sizeBytes: Int64?
 
     init?(json: [String: Any]) {
         name = JSON.string(json["name"])
@@ -294,7 +312,65 @@ struct StreamItem {
             if let s = JSON.string(v) { h[k] = s }
         }
         headers = h
+        bingeGroup = JSON.string(hints?["bingeGroup"])
+        filename = JSON.string(hints?["filename"])
         if url == nil && ytId == nil && infoHash == nil && externalUrl == nil { return nil }
+        let text = [name, title, filename].compactMap { $0 }.joined(separator: " ")
+        quality = StreamItem.parseQuality(text)
+        if let v = hints?["videoSize"] as? NSNumber, v.int64Value > 0 {
+            sizeBytes = v.int64Value
+        } else {
+            sizeBytes = StreamItem.parseSize(text)
+        }
+    }
+
+    var isDirect: Bool {
+        if case .direct = kind { return true }
+        return false
+    }
+
+    var qualityLabel: String? {
+        switch quality {
+        case 2160: return "4K"
+        case 0: return nil
+        default: return "\(quality)p"
+        }
+    }
+
+    var sizeLabel: String? {
+        guard let b = sizeBytes else { return nil }
+        return ByteCountFormatter.string(fromByteCount: b, countStyle: .file)
+    }
+
+    static func parseQuality(_ text: String) -> Int {
+        let t = text.lowercased()
+        if t.contains("2160") || t.contains("4k") || t.contains("uhd") { return 2160 }
+        if t.contains("1440") { return 1440 }
+        if t.contains("1080") || t.contains("fhd") { return 1080 }
+        if t.contains("720") { return 720 }
+        if t.contains("576") || t.contains("480") { return 480 }
+        if t.contains("360") { return 360 }
+        return 0
+    }
+
+    private static let sizeRegex = try? NSRegularExpression(
+        pattern: "(\\d+(?:[.,]\\d+)?)\\s*(tb|gb|gib|mb|mib)\\b", options: [.caseInsensitive])
+
+    static func parseSize(_ text: String) -> Int64? {
+        guard let re = sizeRegex else { return nil }
+        let ns = text as NSString
+        guard let m = re.firstMatch(in: text, options: [], range: NSRange(location: 0, length: ns.length)),
+              m.numberOfRanges >= 3 else { return nil }
+        let number = Double(ns.substring(with: m.range(at: 1)).replacingOccurrences(of: ",", with: ".")) ?? 0
+        let unit = ns.substring(with: m.range(at: 2)).lowercased()
+        let multiplier: Double
+        switch unit {
+        case "tb": multiplier = 1_000_000_000_000
+        case "gb", "gib": multiplier = 1_000_000_000
+        default: multiplier = 1_000_000
+        }
+        let bytes = number * multiplier
+        return bytes > 0 ? Int64(bytes) : nil
     }
 
     var kind: Kind {

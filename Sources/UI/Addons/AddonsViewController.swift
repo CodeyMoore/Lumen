@@ -8,6 +8,7 @@ final class AddonsViewController: UIViewController, UITableViewDataSource, UITab
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationItem.title = "Addons"
+        navigationItem.largeTitleDisplayMode = .never
         view.backgroundColor = Theme.background
 
         navigationItem.rightBarButtonItems = [

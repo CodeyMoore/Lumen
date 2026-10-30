@@ -10,6 +10,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationItem.title = "Library"
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Downloads", style: .plain,
+                                                            target: self, action: #selector(openDownloads))
         view.backgroundColor = Theme.background
 
         segment.selectedSegmentIndex = 0
@@ -50,6 +52,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .libraryChanged, object: nil)
         reload()
+    }
+
+    @objc private func openDownloads() {
+        navigationController?.pushViewController(DownloadsViewController(), animated: true)
     }
 
     @objc private func reload() {

@@ -161,7 +161,7 @@ final class DetailViewController: UIViewController, UITableViewDataSource, UITab
     }
 
     private func openStreams(videoId: String, label: String?) {
-        let vc = StreamsViewController(ref: ref, videoId: videoId, label: label)
+        let vc = StreamsViewController(ref: ref, videoId: videoId, label: label, meta: meta)
         navigationController?.pushViewController(vc, animated: true)
     }
 

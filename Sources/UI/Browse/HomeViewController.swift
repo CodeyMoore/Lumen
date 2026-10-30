@@ -20,6 +20,7 @@ final class HomeViewController: RowsViewController {
     }
 
     @objc private func pulledToRefresh() {
+        AccountSync.pullProgress()
         reload()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.refresh.endRefreshing() }
     }
@@ -69,7 +70,7 @@ final class HomeViewController: RowsViewController {
         if !rows.isEmpty {
             showMessage(nil)
         } else if AddonStore.shared.addons.isEmpty {
-            showMessage("No addons installed yet.\nAdd one in the Addons tab.")
+            showMessage("No addons installed yet.\nAdd one in Settings → Addons.")
         } else {
             showMessage("Your addons don't provide any catalogs.")
         }
