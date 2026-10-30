@@ -7,8 +7,16 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Unzip project
-        run: unzip -q Lumen-iOS12.zip
+      - name: Find project
+        run: |
+          shopt -s nullglob
+          ls -la
+          if ! find . -name project.yml -not -path './.git/*' | grep -q .; then
+            for z in *.zip; do echo "Unzipping $z"; unzip -q -o "$z"; done
+          fi
+          F=$(find . -name project.yml -not -path './.git/*' | head -1)
+          if [ -z "$F" ]; then echo "::error::No project found. Upload Lumen-iOS12.zip to the repo."; exit 1; fi
+          echo "PROJECT_DIR=$(dirname "$F")" >> "$GITHUB_ENV"
       - name: Select Xcode 16
         run: |
           XC=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
@@ -17,7 +25,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Build
-        working-directory: lumen
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -o pipefail
           xcodegen generate
@@ -31,4 +39,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Lumen-ipa
-          path: lumen/Lumen.ipa
+          path: ${{ env.PROJECT_DIR }}/Lumen.ipa
