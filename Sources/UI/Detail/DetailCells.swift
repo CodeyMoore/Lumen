@@ -46,12 +46,12 @@ final class HeroCell: UITableViewCell {
         descriptionLabel.textColor = UIColor(white: 1, alpha: 0.85)
         descriptionLabel.numberOfLines = 0
 
-        style(playButton, background: Theme.accent)
+        self.style(playButton, background: Theme.accent)
         playButton.setImage(Icons.play, for: .normal)
         playButton.tintColor = .white
         playButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
         playButton.addTarget(self, action: #selector(playTapped), for: .touchUpInside)
-        style(libraryButton, background: Theme.surfaceHigh)
+        self.style(libraryButton, background: Theme.surfaceHigh)
         libraryButton.addTarget(self, action: #selector(libraryTapped), for: .touchUpInside)
 
         let textStack = UIStackView(arrangedSubviews: [titleLabel, infoLabel])
