@@ -99,7 +99,7 @@ class SettingsTableController: UIViewController, UITableViewDataSource, UITableV
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let source = tableView.cellForRow(at: indexPath) ?? view
+        let source: UIView = tableView.cellForRow(at: indexPath) ?? view!
         switch sections[indexPath.section].rows[indexPath.row] {
         case .value(_, _, let action), .action(_, _, let action):
             action(source)
