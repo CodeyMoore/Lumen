@@ -23,7 +23,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var engineKind: EngineKind
 
     // Controls
-    private let controls = UIView()
+    private let controls = PassthroughView()
+    private let touchSurface = UIView()
     private let topShade = GradientView()
     private let bottomShade = GradientView()
     private let closeButton = UIButton(type: .custom)
@@ -107,7 +108,18 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let tap = UITapGestureRecognizer(target: self, action: #selector(viewTapped(_:)))
         tap.delegate = self
         tap.cancelsTouchesInView = false
-        view.addGestureRecognizer(tap)
+        // A dedicated layer above the video catches "show/hide controls" taps, so nothing the
+        // video engine adds can intercept them.
+        touchSurface.backgroundColor = .clear
+        touchSurface.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(touchSurface, aboveSubview: engine.view)
+        NSLayoutConstraint.activate([
+            touchSurface.topAnchor.constraint(equalTo: view.topAnchor),
+            touchSurface.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            touchSurface.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            touchSurface.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        touchSurface.addGestureRecognizer(tap)
 
         startCurrent()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
@@ -320,6 +332,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         controls.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(controls)
         topShade.colors = [UIColor(white: 0, alpha: 0.75), UIColor(white: 0, alpha: 0)]
+        topShade.isUserInteractionEnabled = false
+        bottomShade.isUserInteractionEnabled = false
         bottomShade.colors = [UIColor(white: 0, alpha: 0), UIColor(white: 0, alpha: 0.8)]
 
         closeButton.setImage(Icons.close, for: .normal)
@@ -423,6 +437,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         ])
         remainingLabel.textAlignment = .right
     }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         // Let buttons and the slider handle their own touches.
@@ -844,5 +861,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         UIView.animate(withDuration: 0.2, animations: { self.toast.alpha = 1 }) { _ in
             UIView.animate(withDuration: 0.3, delay: 2, options: [], animations: { self.toast.alpha = 0 })
         }
+    }
+}
+
+/// Full-screen container whose empty areas let touches fall through to the views below.
+final class PassthroughView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
     }
 }
