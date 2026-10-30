@@ -251,7 +251,8 @@ final class VLCEngine: NSObject, PlayerEngine {
     }
 
     var isBuffering: Bool {
-        player.state == .buffering || player.state == .opening
+        // VLC reports "buffering" constantly while playing; only treat it as loading when stalled.
+        !player.isPlaying && (player.state == .buffering || player.state == .opening)
     }
 
     var currentTime: Double { Double(player.time.intValue) / 1000 }

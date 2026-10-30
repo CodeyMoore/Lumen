@@ -50,6 +50,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var tickTimer: Timer?
     private var hideTimer: Timer?
     private var isScrubbing = false
+    private var showingPause = false
     private var wasPlaying = false
     private var lastSaved = Date.distantPast
     private var closed = false
@@ -105,6 +106,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(viewTapped(_:)))
         tap.delegate = self
+        tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
 
         startCurrent()
@@ -131,6 +133,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func installEngineView() {
         let v = engine.view
         v.translatesAutoresizingMaskIntoConstraints = false
+        // The video layer never needs touches; VLC adds its own recognizers to it otherwise.
+        v.isUserInteractionEnabled = false
         view.insertSubview(v, at: 0)
         NSLayoutConstraint.activate([
             v.topAnchor.constraint(equalTo: view.topAnchor),
@@ -184,7 +188,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         var playing = false
         if case .playing = state { playing = true }
-        playButton.setImage(playing ? Icons.bigPause : Icons.bigPlay, for: .normal)
+        if playing != showingPause {
+            showingPause = playing
+            playButton.setImage(playing ? Icons.bigPause : Icons.bigPlay, for: .normal)
+        }
+
+        // Keep the video layer underneath the controls even if the engine reshuffles views.
+        if view.subviews.first !== engine.view { view.sendSubviewToBack(engine.view) }
 
         let t = engine.currentTime
         let d = engine.duration
@@ -362,6 +372,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.hidesWhenStopped = true
+        spinner.isUserInteractionEnabled = false
         view.addSubview(spinner)
 
         let safe = view.safeAreaLayoutGuide
