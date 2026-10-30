@@ -32,7 +32,7 @@ jobs:
           xcodebuild -project Lumen.xcodeproj -scheme Lumen \
             -configuration Release -sdk iphoneos \
             -destination 'generic/platform=iOS' -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build 2>&1 | grep -E "error:|\*\* BUILD"
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/Lumen.app Payload/
           zip -qry Lumen.ipa Payload
