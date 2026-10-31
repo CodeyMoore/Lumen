@@ -43,6 +43,25 @@ jobs:
               build
           } 2>&1 | tee build.log | grep -E "error:|\[!\]|\*\* BUILD"
 
+      # Ad-hoc ("fake") signature with entitlements, so jailbroken devices with AppSync
+      # (Filza, etc.) accept it. Sideloadly/AltStore replace this with a real signature.
+      - name: Fakesign app
+        run: |
+          set -o pipefail
+          APP=build/Build/Products/Release-iphoneos/Lumen.app
+          {
+            if [ -d "$APP/Frameworks" ]; then
+              find "$APP/Frameworks" -maxdepth 1 \( -name "*.framework" -o -name "*.dylib" \) -print0 |
+                while IFS= read -r -d '' f; do codesign -f -s - "$f"; done
+            fi
+            find "$APP" -name "*.appex" -print0 | while IFS= read -r -d '' f; do codesign -f -s - "$f"; done
+            codesign -f -s - --entitlements Signing/fakesign.entitlements "$APP"
+            codesign -d --entitlements - "$APP" 2>&1 | grep -q "application-identifier" ||
+              { echo "error: fakesign: application-identifier entitlement missing"; exit 1; }
+            codesign --verify --deep "$APP" || { echo "error: fakesign: signature verification failed"; exit 1; }
+            echo "Fakesign OK"
+          } 2>&1 | tee -a build.log
+
       - name: Package IPA
         run: |
           mkdir -p Payload
@@ -55,17 +74,30 @@ jobs:
           name: Lumen-ipa
           path: Lumen.ipa
 
-      # Saves compile errors to the "build-log" branch so they can be read without the Actions UI.
-      - name: Publish build errors
-        if: failure()
+      # Saves a build report (errors, signing info, app contents) to the "build-log" branch
+      # so it can be read without the Actions UI.
+      - name: Publish build report
+        if: always()
         run: |
           touch build.log
+          APP=build/Build/Products/Release-iphoneos/Lumen.app
           grep -E "error:|\[!\]" build.log | sort -u | head -100 > errors.txt || true
           tail -n 200 build.log > tail.txt || true
+          {
+            echo "commit: ${GITHUB_SHA}"
+            echo "--- entitlements"
+            codesign -d --entitlements - "$APP" 2>&1 || true
+            echo "--- signature"
+            codesign -dv "$APP" 2>&1 || true
+            echo "--- contents"
+            ls -la "$APP" "$APP/Frameworks" 2>&1 || true
+            echo "--- min OS"
+            /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP/Info.plist" 2>&1 || true
+          } > info.txt
           git config user.name "lumen-ci"
           git config user.email "lumen-ci@users.noreply.github.com"
           git checkout --orphan build-log
           git rm -rf --cached . > /dev/null
-          git add -f errors.txt tail.txt
-          git commit -m "Build errors for ${GITHUB_SHA}"
+          git add -f errors.txt tail.txt info.txt
+          git commit -m "Build report for ${GITHUB_SHA}"
           git push -f origin build-log

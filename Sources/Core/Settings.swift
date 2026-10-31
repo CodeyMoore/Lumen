@@ -130,12 +130,22 @@ enum Keychain {
             kSecAttrAccount as String: key,
         ]
         SecItemDelete(query as CFDictionary)
-        guard let value = value, let data = value.data(using: .utf8) else { return }
+        guard let value = value, let data = value.data(using: .utf8) else {
+            UserDefaults.standard.removeObject(forKey: fallbackKey(key))
+            return
+        }
         var add = query
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        if SecItemAdd(add as CFDictionary, nil) == errSecSuccess {
+            UserDefaults.standard.removeObject(forKey: fallbackKey(key))
+        } else {
+            // Fake-signed installs on some jailbroken devices can't use the keychain.
+            UserDefaults.standard.set(value, forKey: fallbackKey(key))
+        }
     }
+
+    private static func fallbackKey(_ key: String) -> String { "kc.fallback.\(key)" }
 
     static func get(_ key: String) -> String? {
         let query: [String: Any] = [
@@ -147,7 +157,9 @@ enum Keychain {
         ]
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
+              let data = result as? Data else {
+            return UserDefaults.standard.string(forKey: fallbackKey(key))
+        }
         return String(data: data, encoding: .utf8)
     }
 }
