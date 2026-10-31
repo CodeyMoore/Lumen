@@ -1,4 +1,10 @@
-# Lume## Features
+# Lumen
+
+A Stremio-addon client for **iOS 12 and later** (iPhone 5s / iPad mini 2 / iPad Air and up), written in Swift + UIKit.
+
+It speaks the same addon protocol as Stremio and Nuvio, so any addon manifest URL you use there works here.
+
+## Features
 
 - **Home**: catalog rows from every installed addon, plus *Continue Watching*
 - **Discover**: browse any catalog by type, genre and year, with endless scrolling
@@ -10,6 +16,7 @@
 - **Downloads** for offline viewing (also visible in the Files app)
 - **Accounts**: import from **Stremio**; **Trakt** scrobbling and Continue Watching; **Nuvio** sign-in with addon, library and progress sync (self-hosted Nuvio servers)
 - **Settings**: default player (built-in or VLC/Infuse/nPlayer/Outplayer), preferred quality, subtitle language, size and background
+- Ships with **Cinemeta** (catalogs and details) and **OpenSubtitles** (subtitles). No stream sources are bundled; add the stream addons you want.
 
 ## Limits
 
@@ -17,4 +24,37 @@
 - **Trakt** needs your own free Trakt API app (Client ID and Secret), entered in Settings → Accounts.
 - **Nuvio**: the official Nuvio servers don't publish the details third-party apps need, so sign-in works with self-hosted Nuvio servers.
 
-n
+## Getting the IPA
+
+Every push to `main` builds the app with GitHub Actions. Open **Actions → Build IPA**, pick the latest run, and download **Lumen-ipa** from *Artifacts*.
+
+The IPA has no Apple signature, only an ad-hoc one. Install it with one of:
+
+- **Jailbroken**: install AppSync Unified, then install the IPA with Filza. The IPA carries the entitlements AppSync installs need.
+- **Sideloadly** (Windows/macOS) with your Apple ID — free accounts need re-signing every 7 days.
+- **AltStore** (iOS 12.2+).
+
+If a build fails, the compile errors are saved to the `build-log` branch (`errors.txt`).
+
+## Build on a Mac
+
+```sh
+brew install xcodegen cocoapods
+xcodegen generate
+pod install
+open Lumen.xcworkspace
+```
+
+Use **Xcode 16** — later Xcode versions may not allow an iOS 12 deployment target.
+
+## Project layout
+
+```
+Sources/App        App delegate and tab bar
+Sources/Core       Addon protocol client, models, storage, accounts, downloads
+Sources/UI         Screens: Browse, Discover, Detail, Library, Settings, Player
+Resources          App icon and launch screen
+Signing            Entitlements used for the ad-hoc signature
+project.yml        XcodeGen project definition
+Podfile            MobileVLCKit (VLC playback engine)
+```
