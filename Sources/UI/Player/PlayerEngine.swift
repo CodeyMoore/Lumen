@@ -40,6 +40,13 @@ protocol PlayerEngine: AnyObject {
     func embeddedSubtitles() -> [TrackOption]
     var currentEmbeddedSubtitle: Int { get }
     func selectEmbeddedSubtitle(_ id: Int) // -1 turns them off
+
+    /// Called when the app moves to/from the background while playback should continue.
+    func setBackgrounded(_ backgrounded: Bool)
+}
+
+extension PlayerEngine {
+    func setBackgrounded(_ backgrounded: Bool) {}
 }
 
 // MARK: - AVPlayer
@@ -60,11 +67,25 @@ final class AVEngine: PlayerEngine {
 
     let name = "iOS player"
     var view: UIView { layerView }
+    /// Exposed for Picture-in-Picture and AirPlay.
+    var playerLayer: AVPlayerLayer { layerView.playerLayer }
+    var avPlayer: AVPlayer { player }
 
     init() {
         layerView.backgroundColor = .black
         layerView.playerLayer.player = player
         layerView.playerLayer.videoGravity = .resizeAspect
+        player.allowsExternalPlayback = true
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
+    }
+
+    /// Video layers pause playback in the background, so detach while backgrounded
+    /// (not during Picture-in-Picture, which needs the layer).
+    var keepLayerInBackground = false
+
+    func setBackgrounded(_ backgrounded: Bool) {
+        guard !keepLayerInBackground else { return }
+        layerView.playerLayer.player = backgrounded ? nil : player
     }
 
     deinit {

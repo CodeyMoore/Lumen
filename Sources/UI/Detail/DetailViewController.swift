@@ -173,7 +173,8 @@ final class DetailViewController: UIViewController, UITableViewDataSource, UITab
         guard let m = meta else { return }
         let last = Episodes.ordered(videos).last
         let next = last.flatMap { Episodes.next(after: $0.id, in: m.videos) }
-        LibraryStore.shared.setWatched(videos.map { $0.id }, watched: watched, ref: ref, next: next)
+        let labels = Dictionary(videos.map { ($0.id, $0.longLabel) }, uniquingKeysWith: { a, _ in a })
+        LibraryStore.shared.setWatched(videos.map { $0.id }, watched: watched, ref: ref, next: next, labels: labels)
     }
 
     @objc private func moreTapped(_ sender: UIBarButtonItem) {

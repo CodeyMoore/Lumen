@@ -155,6 +155,44 @@ final class AppSettings {
         set { set(newValue, "set.subScale") }
     }
 
+    /// Keep playing (audio) when the screen locks or you leave the app.
+    var backgroundPlayback: Bool {
+        get { bool("set.bgPlay", true) }
+        set { set(newValue, "set.bgPlay") }
+    }
+
+    var subtitleColorIndex: Int {
+        get { defaults.integer(forKey: "set.subColor") }
+        set { set(newValue, "set.subColor") }
+    }
+
+    /// 0 = none, 1 = normal, 2 = thick
+    var subtitleOutline: Int {
+        get { defaults.object(forKey: "set.subOutline") == nil ? 1 : defaults.integer(forKey: "set.subOutline") }
+        set { set(newValue, "set.subOutline") }
+    }
+
+    /// 0 = low, 1 = normal, 2 = raised
+    var subtitlePosition: Int {
+        get { defaults.object(forKey: "set.subPosition") == nil ? 1 : defaults.integer(forKey: "set.subPosition") }
+        set { set(newValue, "set.subPosition") }
+    }
+
+    /// Subtitle timing fixes remembered per show/movie id.
+    func subtitleDelay(for mediaId: String) -> Double {
+        (defaults.dictionary(forKey: "lumen.subDelays.v1")?[mediaId] as? NSNumber)?.doubleValue ?? 0
+    }
+
+    func setSubtitleDelay(_ delay: Double, for mediaId: String) {
+        var d = defaults.dictionary(forKey: "lumen.subDelays.v1") ?? [:]
+        d[mediaId] = abs(delay) < 0.01 ? nil : delay
+        defaults.set(d, forKey: "lumen.subDelays.v1")
+    }
+
+    static let subtitleColorChoices: [(Int, String)] = [(0, "White"), (1, "Yellow"), (2, "Cyan"), (3, "Green"), (4, "Pink")]
+    static let subtitleOutlineChoices: [(Int, String)] = [(0, "None"), (1, "Normal"), (2, "Thick")]
+    static let subtitlePositionChoices: [(Int, String)] = [(0, "Low"), (1, "Normal"), (2, "Raised")]
+
     var subtitleBackground: Bool {
         get { bool("set.subBackground", false) }
         set { set(newValue, "set.subBackground") }

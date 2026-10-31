@@ -39,6 +39,7 @@ final class SettingsViewController: SettingsTableController, UIDocumentPickerDel
         let skipModes: [(Int, String)] = [(0, "Don't skip"), (1, "Show Skip button"), (2, "Skip automatically")]
         let currentSkipMode = !s.skipSegments ? 0 : (s.autoSkipSegments ? 2 : 1)
         let playerRows: [Row] = [
+                .toggle("Keep playing in the background", s.backgroundPlayback) { s.backgroundPlayback = $0 },
                 .toggle("Gestures", s.gesturesEnabled) { s.gesturesEnabled = $0 },
                 .value("Rewind & forward by", AppSettings.skipIntervalChoices.first { $0.0 == s.skipInterval }?.1 ?? "\(s.skipInterval) seconds") { [weak self] src in
                     self?.choose("Rewind & Forward By", AppSettings.skipIntervalChoices, current: { $0 == s.skipInterval }, from: src) {
@@ -97,8 +98,8 @@ final class SettingsViewController: SettingsTableController, UIDocumentPickerDel
                 },
                 .toggle("Hide HEVC, AV1, 10-bit & HDR streams", s.hideHeavyStreams) { s.hideHeavyStreams = $0 },
             ]),
-            Section(title: "Player", footer: "Gestures: double-tap the left or right side to jump back or forward, swipe up or down on the left for brightness and on the right for volume, swipe sideways to seek, and pinch to fill the screen.\n\nIntros, recaps & credits: \"Show Skip button\" puts a Skip button on screen while an intro, recap or end credits play. \"Skip automatically\" jumps past them for you. This only works for shows whose timings are in the IntroDB and AniSkip databases.", rows: playerRows),
-            Section(title: "Subtitles", footer: "Subtitles in your preferred language turn on automatically when an addon provides them.", rows: [
+            Section(title: "Player", footer: "Keep playing in the background: sound continues when the screen locks or you switch apps, with controls on the lock screen. On devices that support it, the iOS player also offers Picture in Picture.\n\nGestures: double-tap the left or right side to jump back or forward, swipe up or down on the left for brightness and on the right for volume, swipe sideways to seek, and pinch to fill the screen.\n\nIntros, recaps & credits: \"Show Skip button\" puts a Skip button on screen while an intro, recap or end credits play. \"Skip automatically\" jumps past them for you. This only works for shows whose timings are in the IntroDB and AniSkip databases.", rows: playerRows),
+            Section(title: "Subtitles", footer: "Subtitles in your preferred language turn on automatically when an addon provides them. If you adjust subtitle timing in the player, Lumen remembers it for that show or movie. These styles apply to addon subtitles; subtitles built into a video file use the player's own style.", rows: [
                 .value("Preferred language", langName) { [weak self] src in
                     var options: [(String, String)] = [("", "Off")]
                     options += AppSettings.subtitleLanguages.map { ($0, SubtitleParser.languageName($0)) }
@@ -109,6 +110,21 @@ final class SettingsViewController: SettingsTableController, UIDocumentPickerDel
                 .value("Size", scaleName) { [weak self] src in
                     self?.choose("Subtitle Size", AppSettings.subtitleScaleChoices,
                                  current: { abs($0 - s.subtitleScale) < 0.01 }, from: src) { s.subtitleScale = $0 }
+                },
+                .value("Colour", AppSettings.subtitleColorChoices.first { $0.0 == s.subtitleColorIndex }?.1) { [weak self] src in
+                    self?.choose("Subtitle Colour", AppSettings.subtitleColorChoices, current: { $0 == s.subtitleColorIndex }, from: src) {
+                        s.subtitleColorIndex = $0
+                    }
+                },
+                .value("Outline", AppSettings.subtitleOutlineChoices.first { $0.0 == s.subtitleOutline }?.1) { [weak self] src in
+                    self?.choose("Subtitle Outline", AppSettings.subtitleOutlineChoices, current: { $0 == s.subtitleOutline }, from: src) {
+                        s.subtitleOutline = $0
+                    }
+                },
+                .value("Position", AppSettings.subtitlePositionChoices.first { $0.0 == s.subtitlePosition }?.1) { [weak self] src in
+                    self?.choose("Subtitle Position", AppSettings.subtitlePositionChoices, current: { $0 == s.subtitlePosition }, from: src) {
+                        s.subtitlePosition = $0
+                    }
                 },
                 .toggle("Background box", s.subtitleBackground) { s.subtitleBackground = $0 },
             ]),

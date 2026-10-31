@@ -164,6 +164,13 @@ enum Icons {
         ring.stroke()
     }
 
+    static let pip: UIImage = make(22) {
+        let outer = UIBezierPath(roundedRect: CGRect(x: 1.5, y: 3.5, width: 19, height: 15), cornerRadius: 2)
+        outer.lineWidth = 1.8
+        outer.stroke()
+        UIBezierPath(roundedRect: CGRect(x: 10.5, y: 10.5, width: 8, height: 6), cornerRadius: 1).fill()
+    }
+
     static let play: UIImage = make(16) {
         let p = UIBezierPath()
         p.move(to: CGPoint(x: 3, y: 1.5))

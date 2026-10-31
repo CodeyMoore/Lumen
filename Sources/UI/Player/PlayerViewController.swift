@@ -1,6 +1,7 @@
 import UIKit
 import MediaPlayer
 import AVFoundation
+import AVKit
 
 /// What's being played, with enough context to find the next episode.
 struct PlaybackContext {
@@ -13,7 +14,7 @@ struct PlaybackContext {
 }
 
 /// Full-screen player with custom controls on top of either engine.
-final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate {
+final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate, AVPictureInPictureControllerDelegate {
     enum EngineKind {
         case vlc, avPlayer
     }
@@ -76,6 +77,20 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var panStartValue: Float = 0
     private var panStartTime: Double = 0
     private var panTargetTime: Double = 0
+
+    // Lock screen, background, AirPlay & Picture-in-Picture
+    private let nowPlaying = NowPlaying()
+    private var lastNowPlayingUpdate = Date.distantPast
+    private var nowPlayingWasPlaying = false
+    private let routeView = AVRoutePickerView()
+    private let pipButton = UIButton(type: .custom)
+    private var pipController: AVPictureInPictureController?
+    private var pipActive = false
+    private var dismissedForPiP = false
+    private var lastRouteIsAirPlay = false
+    /// Keeps the player alive while it's only showing in the Picture-in-Picture window.
+    private static var pipHolder: PlayerViewController?
+    private var subtitleBottom: NSLayoutConstraint!
 
     // Skip intro / recap / credits
     private let skipButton = UIButton(type: .custom)
@@ -141,6 +156,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if AppSettings.shared.gesturesEnabled { installGestures(singleTap: tap) }
         buildSkipButton()
         buildHUD()
+        setupNowPlaying()
+        setupPiP()
+
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(routeChanged(_:)), name: AVAudioSession.routeChangeNotification, object: nil)
+        lastRouteIsAirPlay = PlayerViewController.isAirPlayRoute()
 
         startCurrent()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
@@ -155,7 +178,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         UIApplication.shared.isIdleTimerDisabled = false
-        if isBeingDismissed { finishSession() }
+        if isBeingDismissed && !dismissedForPiP { finishSession() }
     }
 
     override func viewDidLayoutSubviews() {
@@ -200,9 +223,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         activeAddonSubtitle = nil
         userPickedSubtitle = false
         setSubtitleText(nil)
+        subtitleDelay = AppSettings.shared.subtitleDelay(for: context.ref.id)
         loadAddonSubtitles()
         computeNextVideo()
         loadSkipSegments()
+
+        nowPlaying.setItem(title: context.label ?? context.ref.name,
+                           subtitle: context.label == nil ? nil : context.ref.name,
+                           artwork: context.ref.poster)
+        nowPlaying.setNextAvailable(nextVideo != nil)
+        lastNowPlayingUpdate = .distantPast
+        applySubtitlePosition()
     }
 
     // MARK: Tick
@@ -249,6 +280,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         updateSubtitle(at: t)
         updateSkipSegment(at: t, playing: playing)
+        if playing != nowPlayingWasPlaying || Date().timeIntervalSince(lastNowPlayingUpdate) > 5 {
+            nowPlayingWasPlaying = playing
+            lastNowPlayingUpdate = Date()
+            nowPlaying.update(elapsed: t, duration: d, playing: playing, rate: engine.rate)
+        }
 
         if d > 0, Date().timeIntervalSince(lastSaved) > 10 { saveProgress() }
 
@@ -288,6 +324,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         AccountSync.playback(.stop, ref: context.ref, videoId: context.videoId,
                              position: engine.currentTime, duration: engine.duration)
         engine.stop()
+        nowPlaying.deactivate()
+        if pipController?.isPictureInPictureActive == true { pipController?.stopPictureInPicture() }
+        pipController?.delegate = nil
+        pipController = nil
+        NotificationCenter.default.removeObserver(self)
     }
 
     @objc private func closeTapped() {
@@ -333,11 +374,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func switchEngine(to kind: EngineKind) {
+        saveProgress()
         engine.stop()
         engine.view.removeFromSuperview()
         engineKind = kind
         engine = kind == .vlc ? VLCEngine() : AVEngine()
         installEngineView()
+        setupPiP()
         startCurrent()
     }
 
@@ -396,7 +439,19 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             l.text = "0:00"
         }
 
-        let rightStack = UIStackView(arrangedSubviews: [speedButton, fillButton, tracksButton])
+        routeView.tintColor = .white
+        routeView.activeTintColor = Theme.accent
+        if #available(iOS 13.0, *) { routeView.prioritizesVideoDevices = true }
+        routeView.translatesAutoresizingMaskIntoConstraints = false
+        routeView.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        routeView.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        pipButton.setImage(Icons.pip, for: .normal)
+        pipButton.tintColor = .white
+        pipButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        pipButton.addTarget(self, action: #selector(pipTapped), for: .touchUpInside)
+        pipButton.isHidden = !AVPictureInPictureController.isPictureInPictureSupported()
+        let rightStack = UIStackView(arrangedSubviews: [routeView, pipButton, speedButton, fillButton, tracksButton])
+        rightStack.alignment = .center
         rightStack.spacing = 2
         let centerStack = UIStackView(arrangedSubviews: [backButton, playButton, forwardButton])
         centerStack.spacing = 36
@@ -622,11 +677,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         for step in [-1.0, -0.5, 0.5, 1.0] {
             let title = step < 0 ? String(format: "Show Earlier (%.1fs)", step) : String(format: "Show Later (+%.1fs)", step)
             sheet.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
-                self?.subtitleDelay += step
-                self?.showToast(String(format: "Subtitles %+.1fs", self?.subtitleDelay ?? 0))
+                guard let self = self else { return }
+                self.subtitleDelay += step
+                AppSettings.shared.setSubtitleDelay(self.subtitleDelay, for: self.context.ref.id)
+                self.showToast(String(format: "Subtitles %+.1fs (remembered for this title)", self.subtitleDelay))
             })
         }
-        sheet.addAction(UIAlertAction(title: "Reset", style: .default) { [weak self] _ in self?.subtitleDelay = 0 })
+        sheet.addAction(UIAlertAction(title: "Reset", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            self.subtitleDelay = 0
+            AppSettings.shared.setSubtitleDelay(0, for: self.context.ref.id)
+        })
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         presentSheet(sheet, from: tracksButton)
     }
@@ -647,8 +708,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             subtitleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
             subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
             subtitleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            subtitleLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -56),
         ])
+        subtitleBottom = subtitleLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -56)
+        subtitleBottom.isActive = true
+        applySubtitlePosition()
     }
 
     private func setSubtitleText(_ text: String?) {
@@ -661,13 +724,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let size = max(16, min(34, min(view.bounds.width, view.bounds.height * 1.7) * 0.034)) * CGFloat(settings.subtitleScale)
         var attrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: size, weight: .semibold),
-            .foregroundColor: UIColor.white,
+            .foregroundColor: PlayerViewController.subtitleColor(settings.subtitleColorIndex),
         ]
         if settings.subtitleBackground {
             attrs[.backgroundColor] = UIColor(white: 0, alpha: 0.6)
-        } else {
+        } else if settings.subtitleOutline > 0 {
             attrs[.strokeColor] = UIColor.black
-            attrs[.strokeWidth] = -3.0
+            attrs[.strokeWidth] = settings.subtitleOutline == 2 ? -5.0 : -3.0
         }
         subtitleLabel.attributedText = NSAttributedString(string: text, attributes: attrs)
         subtitleLabel.isHidden = false
@@ -849,6 +912,172 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             self.startCurrent()
             self.showControls()
         }
+    }
+
+    // MARK: Subtitle style
+
+    static func subtitleColor(_ index: Int) -> UIColor {
+        switch index {
+        case 1: return UIColor(red: 1, green: 0.9, blue: 0.25, alpha: 1)
+        case 2: return UIColor(red: 0.45, green: 0.9, blue: 1, alpha: 1)
+        case 3: return UIColor(red: 0.55, green: 1, blue: 0.55, alpha: 1)
+        case 4: return UIColor(red: 1, green: 0.62, blue: 0.86, alpha: 1)
+        default: return .white
+        }
+    }
+
+    private func applySubtitlePosition() {
+        guard subtitleBottom != nil else { return }
+        switch AppSettings.shared.subtitlePosition {
+        case 0: subtitleBottom.constant = -18
+        case 2: subtitleBottom.constant = -110
+        default: subtitleBottom.constant = -56
+        }
+    }
+
+    // MARK: Lock screen & background
+
+    private func setupNowPlaying() {
+        nowPlaying.activate(NowPlaying.Handlers(
+            play: { [weak self] in self?.engine.play() },
+            pause: { [weak self] in self?.engine.pause() },
+            toggle: { [weak self] in self?.playPauseTapped() },
+            skip: { [weak self] delta in
+                guard let self = self else { return }
+                let d = self.engine.duration
+                let target = max(0, self.engine.currentTime + delta)
+                self.engine.seek(to: d > 0 ? min(target, d - 1) : target)
+                self.lastNowPlayingUpdate = .distantPast
+            },
+            seek: { [weak self] t in
+                self?.engine.seek(to: t)
+                self?.lastNowPlayingUpdate = .distantPast
+            },
+            next: { [weak self] in
+                guard let self = self, self.nextVideo != nil else { return }
+                self.playNext()
+            }))
+    }
+
+    @objc private func appDidEnterBackground() {
+        guard !closed else { return }
+        let wasPlaying = showingPause
+        // Give Picture-in-Picture a moment to start automatically before deciding.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self, !self.closed, !self.pipActive,
+                  UIApplication.shared.applicationState == .background else { return }
+            if AppSettings.shared.backgroundPlayback {
+                self.engine.setBackgrounded(true)
+                if wasPlaying { self.engine.play() }
+            } else {
+                self.engine.pause()
+            }
+        }
+    }
+
+    @objc private func appWillEnterForeground() {
+        engine.setBackgrounded(false)
+    }
+
+    // MARK: AirPlay
+
+    private static func isAirPlayRoute() -> Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .airPlay }
+    }
+
+    @objc private func routeChanged(_ note: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.closed else { return }
+            let airplay = PlayerViewController.isAirPlayRoute()
+            defer { self.lastRouteIsAirPlay = airplay }
+            guard airplay, !self.lastRouteIsAirPlay, self.engineKind == .vlc else { return }
+            let alert = UIAlertController(
+                title: "AirPlay video",
+                message: "The VLC engine can only send sound over AirPlay. Switch to the iOS player to send video too? (It can't play MKV files.)",
+                preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Sound Only", style: .cancel))
+            alert.addAction(UIAlertAction(title: "Switch to iOS Player", style: .default) { [weak self] _ in
+                self?.switchEngine(to: .avPlayer)
+            })
+            self.topPresenter.present(alert, animated: true)
+        }
+    }
+
+    // MARK: Picture-in-Picture
+
+    private func setupPiP() {
+        pipController?.delegate = nil
+        pipController = nil
+        guard AVPictureInPictureController.isPictureInPictureSupported(), let av = engine as? AVEngine else { return }
+        let controller: AVPictureInPictureController? = AVPictureInPictureController(playerLayer: av.playerLayer)
+        controller?.delegate = self
+        if #available(iOS 14.2, *) {
+            controller?.canStartPictureInPictureAutomaticallyFromInline = AppSettings.shared.backgroundPlayback
+        }
+        pipController = controller
+    }
+
+    @objc private func pipTapped() {
+        if engineKind == .vlc {
+            let alert = UIAlertController(
+                title: "Picture in Picture",
+                message: "Picture in Picture needs the iOS player. Switch to it? (It can't play MKV files.)",
+                preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            alert.addAction(UIAlertAction(title: "Switch", style: .default) { [weak self] _ in
+                self?.switchEngine(to: .avPlayer)
+                self?.showToast("Tap Picture in Picture again once the video starts")
+            })
+            present(alert, animated: true)
+            return
+        }
+        guard let pip = pipController else { return }
+        if pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
+        } else if pip.isPictureInPicturePossible {
+            pip.startPictureInPicture()
+        } else {
+            showToast("Picture in Picture will be available once the video starts")
+        }
+    }
+
+    func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        pipActive = true
+        (engine as? AVEngine)?.keepLayerInBackground = true
+    }
+
+    func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        // Leave the full-screen player so the rest of the app can be used while the video floats.
+        guard UIApplication.shared.applicationState == .active, presentingViewController != nil else { return }
+        PlayerViewController.pipHolder = self
+        dismissedForPiP = true
+        dismiss(animated: true)
+    }
+
+    func pictureInPictureController(_ controller: AVPictureInPictureController,
+                                    failedToStartPictureInPictureWithError error: Error) {
+        pipActive = false
+        (engine as? AVEngine)?.keepLayerInBackground = false
+        showToast("Picture in Picture couldn't start")
+    }
+
+    func pictureInPictureController(_ controller: AVPictureInPictureController,
+                                    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        guard dismissedForPiP else { completionHandler(true); return }
+        guard let root = UIApplication.shared.keyWindow?.rootViewController else { completionHandler(false); return }
+        dismissedForPiP = false
+        root.topPresenter.present(self, animated: true) { completionHandler(true) }
+    }
+
+    func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+        pipActive = false
+        (engine as? AVEngine)?.keepLayerInBackground = false
+        if dismissedForPiP {
+            // Closed from the floating window without returning to the player.
+            dismissedForPiP = false
+            finishSession()
+        }
+        PlayerViewController.pipHolder = nil
     }
 
     // MARK: Gestures

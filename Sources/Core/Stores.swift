@@ -176,11 +176,19 @@ struct WatchState: Codable {
     }
 }
 
+struct HistoryEntry: Codable {
+    let ref: MediaRef
+    let videoId: String
+    let label: String?
+    let watchedAt: Date
+}
+
 private struct LibraryData: Codable {
     var items: [LibraryItem] = []
     var watching: [String: WatchState] = [:]   // keyed by meta id
     var progress: [String: VideoProgress] = [:] // keyed by video id
     var watched: Set<String> = []               // video ids
+    var history: [HistoryEntry]? = nil          // newest first
 }
 
 final class LibraryStore {
@@ -310,9 +318,40 @@ final class LibraryStore {
 
     /// Marks videos watched or unwatched. When the in-progress video gets marked watched,
     /// Continue Watching moves on to `next` (if given and not already watched).
-    func setWatched(_ videoIds: [String], watched: Bool, ref: MediaRef, next: Video? = nil) {
+    // History
+
+    var history: [HistoryEntry] { data.history ?? [] }
+
+    private func addHistory(ref: MediaRef, videoId: String, label: String?) {
+        var h = data.history ?? []
+        // A rewatch within a few hours replaces the earlier entry rather than duplicating it.
+        h.removeAll { $0.videoId == videoId && Date().timeIntervalSince($0.watchedAt) < 6 * 3600 }
+        h.insert(HistoryEntry(ref: ref, videoId: videoId, label: label, watchedAt: Date()), at: 0)
+        if h.count > 500 { h.removeLast(h.count - 500) }
+        data.history = h
+    }
+
+    func removeHistory(at index: Int) {
+        guard var h = data.history, h.indices.contains(index) else { return }
+        h.remove(at: index)
+        data.history = h
+        save()
+    }
+
+    func clearHistory() {
+        data.history = []
+        save()
+    }
+
+    func setWatched(_ videoIds: [String], watched: Bool, ref: MediaRef, next: Video? = nil, labels: [String: String] = [:]) {
         guard !videoIds.isEmpty else { return }
         let ids = Set(videoIds)
+        if watched && videoIds.count == 1, let id = videoIds.first, !data.watched.contains(id) {
+            addHistory(ref: ref, videoId: id, label: labels[id])
+        }
+        if !watched {
+            data.history = data.history?.filter { !ids.contains($0.videoId) }
+        }
         if watched {
             data.watched.formUnion(ids)
             for id in ids { data.progress[id] = nil }
@@ -338,6 +377,9 @@ final class LibraryStore {
     func updateProgress(ref: MediaRef, videoId: String, label: String?, position: Double, duration: Double,
                         next: Video? = nil) {
         if duration > 0 && position / duration >= 0.92 {
+            if data.progress[videoId] != nil || !data.watched.contains(videoId) {
+                addHistory(ref: ref, videoId: videoId, label: label)
+            }
             data.progress[videoId] = nil
             data.watched.insert(videoId)
             let w = data.watching[ref.id]

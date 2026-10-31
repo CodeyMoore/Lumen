@@ -12,6 +12,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         navigationItem.title = "Library"
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Downloads", style: .plain,
                                                             target: self, action: #selector(openDownloads))
+        navigationItem.leftBarButtonItem = UIBarButtonItem(title: "History", style: .plain,
+                                                           target: self, action: #selector(openHistory))
         view.backgroundColor = Theme.background
 
         segment.selectedSegmentIndex = 0
@@ -52,6 +54,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .libraryChanged, object: nil)
         reload()
+    }
+
+    @objc private func openHistory() {
+        navigationController?.pushViewController(HistoryViewController(), animated: true)
     }
 
     @objc private func openDownloads() {
