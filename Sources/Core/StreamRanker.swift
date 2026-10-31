@@ -45,7 +45,7 @@ enum QualityFilter: Int, CaseIterable {
 enum StreamRanker {
     /// Higher is better. Prefers the user's chosen quality, never above it unless nothing else exists.
     static func qualityScore(_ q: Int) -> Int {
-        let preferred = AppSettings.shared.preferredQuality
+        let preferred = AppSettings.shared.effectiveQuality
         guard q > 0 else { return 0 }
         guard preferred > 0 else { return q }
         if q == preferred { return 10_000 }
@@ -57,10 +57,18 @@ enum StreamRanker {
         AppSettings.shared.rememberAddon && r.addon.manifest.id == AppSettings.shared.preferredAddonId
     }
 
+    /// Streams hidden by compatibility settings.
+    static func isHidden(_ r: RankedStream) -> Bool {
+        let s = AppSettings.shared
+        return s.compatActive && s.hideHeavyStreams && r.stream.codec.isHeavy
+    }
+
     static func sorted(_ items: [RankedStream], by sort: StreamSort) -> [RankedStream] {
-        items.sorted { a, b in
+        let compat = AppSettings.shared.compatActive
+        return items.sorted { a, b in
             switch sort {
             case .quality:
+                if compat && a.stream.codec.isHeavy != b.stream.codec.isHeavy { return !a.stream.codec.isHeavy }
                 let qa = qualityScore(a.stream.quality), qb = qualityScore(b.stream.quality)
                 if qa != qb { return qa > qb }
             case .size:
@@ -80,7 +88,7 @@ enum StreamRanker {
 
     /// Best directly playable stream, optionally restricted to a binge group or addon.
     static func best(_ items: [RankedStream], bingeGroup: String? = nil, addonId: String? = nil) -> RankedStream? {
-        var pool = items.filter { $0.stream.isDirect }
+        var pool = items.filter { $0.stream.isDirect && !isHidden($0) }
         if let g = bingeGroup {
             let same = pool.filter { $0.stream.bingeGroup == g }
             if !same.isEmpty { return sorted(same, by: .quality).first }

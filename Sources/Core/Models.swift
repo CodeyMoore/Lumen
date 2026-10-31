@@ -249,6 +249,8 @@ struct MetaItem {
     let genres: [String]
     let videos: [Video]
     let defaultVideoId: String?
+    /// YouTube ids of trailers.
+    let trailers: [(id: String, title: String)]
 
     init?(json: [String: Any], fallbackType: String? = nil) {
         guard let id = JSON.string(json["id"]),
@@ -271,6 +273,18 @@ struct MetaItem {
         genres = g
         videos = JSON.dicts(json["videos"]).compactMap(Video.init(json:))
         defaultVideoId = JSON.string(JSON.dict(json["behaviorHints"])?["defaultVideoId"])
+        var t: [(id: String, title: String)] = []
+        for d in JSON.dicts(json["trailerStreams"]) {
+            if let y = JSON.string(d["ytId"]), !t.contains(where: { $0.id == y }) {
+                t.append((y, JSON.string(d["title"]) ?? "Trailer"))
+            }
+        }
+        for d in JSON.dicts(json["trailers"]) {
+            if let y = JSON.string(d["source"]), !t.contains(where: { $0.id == y }) {
+                t.append((y, JSON.string(d["type"]) ?? "Trailer"))
+            }
+        }
+        trailers = t
     }
 
     var ref: MediaRef { MediaRef(id: id, type: type, name: name, poster: poster) }
@@ -297,6 +311,8 @@ struct StreamItem {
     /// Vertical resolution parsed from the stream's labels (2160, 1080…); 0 if unknown.
     let quality: Int
     let sizeBytes: Int64?
+    /// Codec info parsed from labels.
+    let codec: VideoCodecInfo
 
     init?(json: [String: Any]) {
         name = JSON.string(json["name"])
@@ -317,6 +333,7 @@ struct StreamItem {
         if url == nil && ytId == nil && infoHash == nil && externalUrl == nil { return nil }
         let text = [name, title, filename].compactMap { $0 }.joined(separator: " ")
         quality = StreamItem.parseQuality(text)
+        codec = VideoCodecInfo(text: text)
         if let v = hints?["videoSize"] as? NSNumber, v.int64Value > 0 {
             sizeBytes = v.int64Value
         } else {
@@ -402,5 +419,50 @@ struct SubtitleTrack {
         self.url = url
         id = JSON.string(json["id"]) ?? url
         lang = JSON.string(json["lang"]) ?? "und"
+    }
+}
+
+// MARK: - Codec info
+
+/// What a stream's labels say about how hard it is to decode.
+struct VideoCodecInfo {
+    enum Codec {
+        case h264, hevc, av1, unknown
+    }
+
+    let codec: Codec
+    let tenBit: Bool
+    let hdr: Bool
+
+    init(text: String) {
+        let t = text.lowercased()
+        func has(_ words: [String]) -> Bool { words.contains { t.contains($0) } }
+        if has(["av1"]) {
+            codec = .av1
+        } else if has(["x265", "h265", "h.265", "hevc"]) {
+            codec = .hevc
+        } else if has(["x264", "h264", "h.264", "avc"]) {
+            codec = .h264
+        } else {
+            codec = .unknown
+        }
+        tenBit = has(["10bit", "10-bit", "10 bit", "hi10"])
+        hdr = has(["hdr", "dolby vision", "dovi", " dv ", ".dv.", "[dv]"])
+    }
+
+    /// Needs hardware this device may not have: HEVC, AV1, 10-bit or HDR.
+    var isHeavy: Bool { codec == .hevc || codec == .av1 || tenBit || hdr }
+
+    var label: String? {
+        var parts: [String] = []
+        switch codec {
+        case .h264: parts.append("H.264")
+        case .hevc: parts.append("HEVC")
+        case .av1: parts.append("AV1")
+        case .unknown: break
+        }
+        if tenBit { parts.append("10-bit") }
+        if hdr { parts.append("HDR") }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 }

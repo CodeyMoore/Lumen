@@ -155,6 +155,7 @@ final class StreamsViewController: UIViewController, UITableViewDataSource, UITa
         let settings = AppSettings.shared
         let visible = all.filter { r in
             if settings.hideTorrents, case .torrent = r.stream.kind { return false }
+            if StreamRanker.isHidden(r) { return false }
             return filter.matches(r.stream.quality) || filter == .all
         }
         shown = StreamRanker.sorted(visible, by: sort)
@@ -172,6 +173,7 @@ final class StreamsViewController: UIViewController, UITableViewDataSource, UITa
             statusLabel.text = all.isEmpty ? "No streams found." : "No streams match this filter."
         } else {
             statusLabel.text = "\(shown.count) stream\(shown.count == 1 ? "" : "s")"
+                + (AppSettings.shared.compatActive ? " · compatibility mode" : "")
         }
     }
 
@@ -233,7 +235,7 @@ final class StreamsViewController: UIViewController, UITableViewDataSource, UITa
 
         let r = shown[indexPath.row]
         let s = r.stream
-        var badges = [s.qualityLabel, s.sizeLabel, r.addon.manifest.name].compactMap { $0 }
+        var badges = [s.qualityLabel, s.codec.label, s.sizeLabel, r.addon.manifest.name].compactMap { $0 }
         if AppSettings.shared.rememberAddon, r.addon.manifest.id == AppSettings.shared.preferredAddonId {
             badges.append("★")
         }
@@ -245,6 +247,9 @@ final class StreamsViewController: UIViewController, UITableViewDataSource, UITa
         case .youtube: detail += "\nOpens in YouTube"
         case .external: detail += "\nOpens externally"
         default: break
+        }
+        if AppSettings.shared.compatActive && s.codec.isHeavy && s.isDirect {
+            detail += "\nMay stutter on this device (needs newer video hardware)"
         }
         cell.detailTextLabel?.text = detail
         cell.contentView.alpha = s.isDirect ? 1 : 0.55

@@ -1,4 +1,6 @@
 import UIKit
+import MediaPlayer
+import AVFoundation
 
 /// What's being played, with enough context to find the next episode.
 struct PlaybackContext {
@@ -65,6 +67,22 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var subtitleDelay: Double = 0
     private var userPickedSubtitle = false
 
+    // Gestures
+    private let hud = UILabel()
+    private var hudTimer: Timer?
+    private let volumeView = MPVolumeView(frame: CGRect(x: -100, y: -100, width: 10, height: 10))
+    private enum PanMode { case none, brightness, volume, seek }
+    private var panMode = PanMode.none
+    private var panStartValue: Float = 0
+    private var panStartTime: Double = 0
+    private var panTargetTime: Double = 0
+
+    // Skip intro / recap / credits
+    private let skipButton = UIButton(type: .custom)
+    private var segments: [SkipSegment] = []
+    private var autoSkipped: Set<Double> = []
+    private var activeSegment: SkipSegment?
+
     private var nextVideo: Video?
     private var upNextCancelled = false
     private var upNextCountdown = 0
@@ -120,6 +138,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             touchSurface.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         touchSurface.addGestureRecognizer(tap)
+        if AppSettings.shared.gesturesEnabled { installGestures(singleTap: tap) }
+        buildSkipButton()
+        buildHUD()
 
         startCurrent()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
@@ -181,6 +202,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         setSubtitleText(nil)
         loadAddonSubtitles()
         computeNextVideo()
+        loadSkipSegments()
     }
 
     // MARK: Tick
@@ -226,6 +248,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         updateSubtitle(at: t)
+        updateSkipSegment(at: t, playing: playing)
 
         if d > 0, Date().timeIntervalSince(lastSaved) > 10 { saveProgress() }
 
@@ -253,7 +276,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard d > 0 else { return }
         lastSaved = Date()
         LibraryStore.shared.updateProgress(ref: context.ref, videoId: context.videoId, label: context.label,
-                                           position: engine.currentTime, duration: d)
+                                           position: engine.currentTime, duration: d, next: nextVideo)
     }
 
     private func finishSession() {
@@ -277,7 +300,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let d = engine.duration
         if d > 0 {
             LibraryStore.shared.updateProgress(ref: context.ref, videoId: context.videoId, label: context.label,
-                                               position: d, duration: d)
+                                               position: d, duration: d, next: nextVideo)
         }
         AccountSync.playback(.stop, ref: context.ref, videoId: context.videoId, position: d, duration: d)
         if AppSettings.shared.autoplayNext, nextVideo != nil, !upNextCancelled {
@@ -354,10 +377,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         playButton.tintColor = .white
         playButton.setImage(Icons.bigPlay, for: .normal)
         playButton.addTarget(self, action: #selector(playPauseTapped), for: .touchUpInside)
-        styleTextButton(backButton, "−10s")
+        styleTextButton(backButton, "−\(AppSettings.shared.skipInterval)s")
         backButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
-        styleTextButton(forwardButton, "+10s")
+        styleTextButton(forwardButton, "+\(AppSettings.shared.skipInterval)s")
         forwardButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
         forwardButton.addTarget(self, action: #selector(forwardTapped), for: .touchUpInside)
 
@@ -480,13 +503,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     @objc private func backTapped() {
-        engine.seek(to: max(0, engine.currentTime - 10))
+        engine.seek(to: max(0, engine.currentTime - Double(AppSettings.shared.skipInterval)))
         scheduleHide()
     }
 
     @objc private func forwardTapped() {
         let d = engine.duration
-        let target = engine.currentTime + 10
+        let target = engine.currentTime + Double(AppSettings.shared.skipInterval)
         engine.seek(to: d > 0 ? min(d - 1, target) : target)
         scheduleHide()
     }
@@ -710,15 +733,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     // MARK: Up Next
 
     private func computeNextVideo() {
-        nextVideo = nil
-        guard let videos = context.meta?.videos, !videos.isEmpty else { return }
-        let ordered = videos.sorted { a, b in
-            if (a.season ?? 0) != (b.season ?? 0) { return (a.season ?? 0) < (b.season ?? 0) }
-            return (a.episode ?? 0) < (b.episode ?? 0)
-        }
-        guard let i = ordered.firstIndex(where: { $0.id == context.videoId }) else { return }
-        let currentSeason = ordered[i].season ?? 0
-        nextVideo = ordered.dropFirst(i + 1).first { currentSeason == 0 || ($0.season ?? 0) > 0 }
+        nextVideo = context.meta.flatMap { Episodes.next(after: context.videoId, in: $0.videos) }
     }
 
     private func buildUpNext() {
@@ -802,7 +817,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let d = engine.duration
         if d > 0 {
             LibraryStore.shared.updateProgress(ref: context.ref, videoId: context.videoId, label: context.label,
-                                               position: d, duration: d)
+                                               position: d, duration: d, next: nextVideo)
         }
         AccountSync.playback(.stop, ref: context.ref, videoId: context.videoId, position: d, duration: d)
         engine.pause()
@@ -834,6 +849,211 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             self.startCurrent()
             self.showControls()
         }
+    }
+
+    // MARK: Gestures
+
+    private func installGestures(singleTap: UITapGestureRecognizer) {
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.delegate = self
+        touchSurface.addGestureRecognizer(doubleTap)
+        singleTap.require(toFail: doubleTap)
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = self
+        touchSurface.addGestureRecognizer(pan)
+
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:)))
+        pinch.delegate = self
+        touchSurface.addGestureRecognizer(pinch)
+
+        // An on-screen (but invisible) volume view lets swipes change the system volume
+        // without iOS showing its own volume overlay.
+        volumeView.alpha = 0.01
+        volumeView.isUserInteractionEnabled = false
+        view.addSubview(volumeView)
+    }
+
+    private var volumeSlider: UISlider? {
+        volumeView.subviews.compactMap { $0 as? UISlider }.first
+    }
+
+    @objc private func doubleTapped(_ gr: UITapGestureRecognizer) {
+        let x = gr.location(in: view).x
+        let w = view.bounds.width
+        let step = Double(AppSettings.shared.skipInterval)
+        if x < w / 3 {
+            engine.seek(to: max(0, engine.currentTime - step))
+            showHUD("−\(Int(step))s")
+        } else if x > w * 2 / 3 {
+            let d = engine.duration
+            let target = engine.currentTime + step
+            engine.seek(to: d > 0 ? min(d - 1, target) : target)
+            showHUD("+\(Int(step))s")
+        } else {
+            playPauseTapped()
+        }
+    }
+
+    @objc private func panned(_ gr: UIPanGestureRecognizer) {
+        let size = view.bounds.size
+        switch gr.state {
+        case .began:
+            let v = gr.velocity(in: view)
+            let start = gr.location(in: view)
+            if abs(v.x) > abs(v.y) {
+                guard engine.duration > 0 else { panMode = .none; return }
+                panMode = .seek
+                panStartTime = engine.currentTime
+                panTargetTime = panStartTime
+                hideTimer?.invalidate()
+            } else if start.x < size.width / 2 {
+                panMode = .brightness
+                panStartValue = Float(UIScreen.main.brightness)
+            } else {
+                panMode = .volume
+                panStartValue = AVAudioSession.sharedInstance().outputVolume
+            }
+        case .changed:
+            let t = gr.translation(in: view)
+            switch panMode {
+            case .brightness:
+                let value = min(1, max(0, panStartValue - Float(t.y / (size.height * 0.8))))
+                UIScreen.main.brightness = CGFloat(value)
+                showHUD("Brightness \(Int(value * 100))%")
+            case .volume:
+                let value = min(1, max(0, panStartValue - Float(t.y / (size.height * 0.8))))
+                volumeSlider?.setValue(value, animated: false)
+                volumeSlider?.sendActions(for: .valueChanged)
+                showHUD("Volume \(Int(value * 100))%")
+            case .seek:
+                let d = engine.duration
+                // One screen width ≈ 2 minutes (or the whole video if shorter).
+                let span = min(d, 120)
+                panTargetTime = min(max(0, panStartTime + Double(t.x / size.width) * span), max(0, d - 1))
+                let delta = panTargetTime - panStartTime
+                let sign = delta < 0 ? "−" : "+"
+                showHUD("\(PlayerViewController.format(panTargetTime)) / \(PlayerViewController.format(d))   \(sign)\(PlayerViewController.format(abs(delta)))")
+            case .none:
+                break
+            }
+        case .ended:
+            if panMode == .seek { engine.seek(to: panTargetTime) }
+            panMode = .none
+            scheduleHide()
+        case .cancelled, .failed:
+            panMode = .none
+        default:
+            break
+        }
+    }
+
+    @objc private func pinched(_ gr: UIPinchGestureRecognizer) {
+        guard gr.state == .ended else { return }
+        if gr.scale > 1.15 && !engine.fill {
+            engine.fill = true
+        } else if gr.scale < 0.87 && engine.fill {
+            engine.fill = false
+        } else {
+            return
+        }
+        fillButton.setTitle(engine.fill ? "Fit" : "Fill", for: .normal)
+        showHUD(engine.fill ? "Fill screen" : "Fit to screen")
+    }
+
+    private func buildHUD() {
+        hud.textColor = .white
+        hud.font = UIFont.monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
+        hud.backgroundColor = UIColor(white: 0, alpha: 0.65)
+        hud.textAlignment = .center
+        hud.layer.cornerRadius = 10
+        hud.clipsToBounds = true
+        hud.alpha = 0
+        hud.isUserInteractionEnabled = false
+        hud.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hud)
+        NSLayoutConstraint.activate([
+            hud.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            hud.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -70),
+            hud.heightAnchor.constraint(equalToConstant: 44),
+            hud.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40),
+        ])
+    }
+
+    private func showHUD(_ text: String) {
+        hud.text = "    \(text)    "
+        hud.alpha = 1
+        hudTimer?.invalidate()
+        hudTimer = Timer.scheduledTimer(withTimeInterval: 0.9, repeats: false) { [weak self] _ in
+            UIView.animate(withDuration: 0.25) { self?.hud.alpha = 0 }
+        }
+    }
+
+    // MARK: Skip intro / recap / credits
+
+    private func buildSkipButton() {
+        skipButton.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
+        skipButton.layer.cornerRadius = 8
+        skipButton.layer.borderWidth = 1
+        skipButton.layer.borderColor = UIColor(white: 1, alpha: 0.35).cgColor
+        skipButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        skipButton.setTitleColor(.white, for: .normal)
+        skipButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
+        skipButton.isHidden = true
+        skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
+        skipButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(skipButton)
+        NSLayoutConstraint.activate([
+            skipButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
+            skipButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -64),
+        ])
+    }
+
+    private func loadSkipSegments() {
+        segments = []
+        autoSkipped = []
+        activeSegment = nil
+        skipButton.isHidden = true
+        guard AppSettings.shared.skipSegments, context.ref.type != "movie" else { return }
+        let videoId = context.videoId
+        SkipSegmentService.fetch(videoId: videoId) { [weak self] found in
+            guard let self = self, self.context.videoId == videoId else { return }
+            self.segments = found
+        }
+    }
+
+    private func updateSkipSegment(at t: Double, playing: Bool) {
+        guard !segments.isEmpty else { return }
+        let current = segments.first { t >= $0.start && t < $0.end - 1 }
+        if let seg = current, AppSettings.shared.autoSkipSegments, playing, !autoSkipped.contains(seg.start) {
+            autoSkipped.insert(seg.start)
+            skip(seg)
+            return
+        }
+        let show = current != nil && upNextCard.isHidden
+        if show, let seg = current, activeSegment?.start != seg.start {
+            skipButton.setTitle(seg.kind.buttonTitle, for: .normal)
+        }
+        activeSegment = show ? current : nil
+        if skipButton.isHidden == show {
+            skipButton.isHidden = !show
+            view.bringSubviewToFront(skipButton)
+        }
+    }
+
+    @objc private func skipTapped() {
+        guard let seg = activeSegment else { return }
+        skip(seg)
+    }
+
+    private func skip(_ seg: SkipSegment) {
+        let d = engine.duration
+        engine.seek(to: d > 0 ? min(seg.end, d - 1) : seg.end)
+        activeSegment = nil
+        skipButton.isHidden = true
+        showToast(seg.kind.doneMessage)
     }
 
     // MARK: Toast

@@ -1,4 +1,5 @@
 import UIKit
+import SafariServices
 
 final class DetailViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var ref: MediaRef
@@ -110,6 +111,8 @@ final class DetailViewController: UIViewController, UITableViewDataSource, UITab
         spinner.stopAnimating()
         tableView.isHidden = false
         tableView.reloadData()
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "•••", style: .plain,
+                                                            target: self, action: #selector(moreTapped(_:)))
     }
 
     private func updateEpisodes() {
@@ -134,18 +137,17 @@ final class DetailViewController: UIViewController, UITableViewDataSource, UITab
            let v = m.videos.first(where: { $0.id == ws.videoId }) {
             return v
         }
-        let firstSeason = seasons.first(where: { $0 > 0 }) ?? seasons.first ?? 0
-        return m.videos
-            .filter { ($0.season ?? 0) == firstSeason && !LibraryStore.shared.isWatched($0.id) }
-            .sorted { ($0.episode ?? 0) < ($1.episode ?? 0) }
-            .first
-            ?? episodes.first
+        let ordered = Episodes.ordered(m.videos)
+        let regular = ordered.filter { ($0.season ?? 0) > 0 }
+        let pool = regular.isEmpty ? ordered : regular
+        return pool.first { !LibraryStore.shared.isWatched($0.id) } ?? pool.first ?? episodes.first
     }
 
     private func playTitle() -> String {
         if hasEpisodes {
             guard let v = resumeVideo() else { return "Play" }
-            let resuming = LibraryStore.shared.watchState(for: ref.id)?.videoId == v.id
+            let ws = LibraryStore.shared.watchState(for: ref.id)
+            let resuming = ws?.videoId == v.id && ws?.isUpNext == false
             return (resuming ? "Resume " : "Play ") + v.shortLabel
         }
         return LibraryStore.shared.position(for: movieVideoId) > 0 ? "Resume" : "Play"
@@ -163,6 +165,76 @@ final class DetailViewController: UIViewController, UITableViewDataSource, UITab
     private func openStreams(videoId: String, label: String?) {
         let vc = StreamsViewController(ref: ref, videoId: videoId, label: label, meta: meta)
         navigationController?.pushViewController(vc, animated: true)
+    }
+
+    // MARK: Watched & trailers
+
+    private func setWatched(_ videos: [Video], watched: Bool) {
+        guard let m = meta else { return }
+        let last = Episodes.ordered(videos).last
+        let next = last.flatMap { Episodes.next(after: $0.id, in: m.videos) }
+        LibraryStore.shared.setWatched(videos.map { $0.id }, watched: watched, ref: ref, next: next)
+    }
+
+    @objc private func moreTapped(_ sender: UIBarButtonItem) {
+        guard let m = meta else { return }
+        let sheet = UIAlertController(title: ref.name, message: nil, preferredStyle: .actionSheet)
+        if hasEpisodes {
+            let seasonName = selectedSeason == 0 ? "Specials" : "Season \(selectedSeason)"
+            let allWatched = !episodes.isEmpty && episodes.allSatisfy { LibraryStore.shared.isWatched($0.id) }
+            sheet.addAction(UIAlertAction(title: "Mark \(seasonName) \(allWatched ? "Unwatched" : "Watched")",
+                                          style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                self.setWatched(self.episodes, watched: !allWatched)
+            })
+            let aired = m.videos.filter { ($0.released ?? .distantPast) <= Date() && ($0.season ?? 0) > 0 }
+            sheet.addAction(UIAlertAction(title: "Mark All Episodes Watched", style: .default) { [weak self] _ in
+                self?.setWatched(aired, watched: true)
+            })
+            sheet.addAction(UIAlertAction(title: "Mark All Episodes Unwatched", style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                self.setWatched(m.videos, watched: false)
+                LibraryStore.shared.removeFromContinue(self.ref.id)
+            })
+        } else {
+            let watched = LibraryStore.shared.isWatched(movieVideoId)
+            sheet.addAction(UIAlertAction(title: watched ? "Mark as Unwatched" : "Mark as Watched", style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                LibraryStore.shared.setWatched([self.movieVideoId], watched: !watched, ref: self.ref)
+                if !watched { LibraryStore.shared.removeFromContinue(self.ref.id) }
+            })
+        }
+        if !m.trailers.isEmpty {
+            sheet.addAction(UIAlertAction(title: "Watch Trailer", style: .default) { [weak self] _ in self?.playTrailer() })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let pop = sheet.popoverPresentationController { pop.barButtonItem = sender }
+        present(sheet, animated: true)
+    }
+
+    private func playTrailer() {
+        guard let trailers = meta?.trailers, !trailers.isEmpty else { return }
+        guard trailers.count > 1 else { openTrailer(trailers[0].id); return }
+        let sheet = UIAlertController(title: "Trailers", message: nil, preferredStyle: .actionSheet)
+        for (i, t) in trailers.prefix(8).enumerated() {
+            sheet.addAction(UIAlertAction(title: "\(t.title) \(i + 1)", style: .default) { [weak self] _ in
+                self?.openTrailer(t.id)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        presentSheet(sheet, from: nil)
+    }
+
+    private func openTrailer(_ youtubeId: String) {
+        let id = StremioAPI.encode(youtubeId)
+        if let app = URL(string: "youtube://watch?v=\(id)"), UIApplication.shared.canOpenURL(app) {
+            UIApplication.shared.open(app, options: [:])
+        } else if let web = URL(string: "https://m.youtube.com/watch?v=\(id)") {
+            let safari = SFSafariViewController(url: web)
+            safari.preferredControlTintColor = Theme.accent
+            safari.preferredBarTintColor = Theme.background
+            present(safari, animated: true)
+        }
     }
 
     @objc private func seasonTapped(_ sender: UIButton) {
@@ -195,6 +267,7 @@ final class DetailViewController: UIViewController, UITableViewDataSource, UITab
             let cell = tableView.dequeueReusableCell(withIdentifier: HeroCell.reuseId, for: indexPath) as! HeroCell
             cell.configure(meta: m, inLibrary: LibraryStore.shared.contains(ref.id), playTitle: playTitle())
             cell.onPlay = { [weak self] in self?.playTapped() }
+            cell.onTrailer = m.trailers.isEmpty ? nil : { [weak self] in self?.playTrailer() }
             cell.onLibrary = { [weak self] in
                 guard let self = self else { return }
                 LibraryStore.shared.toggle(self.ref)
@@ -242,6 +315,19 @@ final class DetailViewController: UIViewController, UITableViewDataSource, UITab
 
     func tableView(_ tableView: UITableView, shouldHighlightRowAt indexPath: IndexPath) -> Bool {
         indexPath.section == 1
+    }
+
+    func tableView(_ tableView: UITableView,
+                   trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard indexPath.section == 1, episodes.indices.contains(indexPath.row) else { return nil }
+        let v = episodes[indexPath.row]
+        let watched = LibraryStore.shared.isWatched(v.id)
+        let action = UIContextualAction(style: .normal, title: watched ? "Unwatched" : "Watched") { [weak self] _, _, done in
+            self?.setWatched([v], watched: !watched)
+            done(true)
+        }
+        action.backgroundColor = watched ? Theme.surfaceHigh : Theme.accent
+        return UISwipeActionsConfiguration(actions: [action])
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

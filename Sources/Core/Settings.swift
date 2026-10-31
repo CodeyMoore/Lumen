@@ -76,6 +76,66 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "set.preferredAddon") }
     }
 
+    enum CompatMode: String, CaseIterable {
+        case auto, on, off
+
+        var title: String {
+            switch self {
+            case .auto: return "Automatic"
+            case .on: return "On"
+            case .off: return "Off"
+            }
+        }
+    }
+
+    /// Prefer streams old hardware can decode smoothly (H.264, 1080p or lower).
+    var compatMode: CompatMode {
+        get { CompatMode(rawValue: defaults.string(forKey: "set.compat") ?? "") ?? .auto }
+        set { set(newValue.rawValue, "set.compat") }
+    }
+
+    var compatActive: Bool {
+        switch compatMode {
+        case .on: return true
+        case .off: return false
+        case .auto: return !DeviceCaps.hevcHardwareDecode
+        }
+    }
+
+    /// In compatibility mode, hide HEVC/AV1/10-bit/HDR streams entirely.
+    var hideHeavyStreams: Bool {
+        get { bool("set.hideHeavy", false) }
+        set { set(newValue, "set.hideHeavy") }
+    }
+
+    /// Quality cap actually used for ranking (compatibility mode caps "Highest" at 1080p).
+    var effectiveQuality: Int {
+        let q = preferredQuality
+        if compatActive && (q == 0 || q > 1080) { return 1080 }
+        return q
+    }
+
+    var gesturesEnabled: Bool {
+        get { bool("set.gestures", true) }
+        set { set(newValue, "set.gestures") }
+    }
+
+    /// Seconds jumped by the skip buttons and double-tap.
+    var skipInterval: Int {
+        get { defaults.object(forKey: "set.skipInterval") == nil ? 10 : defaults.integer(forKey: "set.skipInterval") }
+        set { set(newValue, "set.skipInterval") }
+    }
+
+    var skipSegments: Bool {
+        get { bool("set.skipSegments", true) }
+        set { set(newValue, "set.skipSegments") }
+    }
+
+    var autoSkipSegments: Bool {
+        get { bool("set.autoSkip", false) }
+        set { set(newValue, "set.autoSkip") }
+    }
+
     var hideTorrents: Bool {
         get { bool("set.hideTorrents", true) }
         set { set(newValue, "set.hideTorrents") }
@@ -107,6 +167,8 @@ final class AppSettings {
         defaults.set(id, forKey: "set.installId")
         return id
     }
+
+    static let skipIntervalChoices: [(Int, String)] = [(5, "5 seconds"), (10, "10 seconds"), (15, "15 seconds"), (30, "30 seconds")]
 
     static let qualityChoices: [(Int, String)] = [(0, "Highest"), (2160, "4K"), (1080, "1080p"), (720, "720p"), (480, "480p")]
 

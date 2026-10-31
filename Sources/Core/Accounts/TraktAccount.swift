@@ -196,6 +196,32 @@ final class TraktAccount {
         authorized("/scrobble/\(action)", method: "POST", json: body) { _ in }
     }
 
+    // MARK: History
+
+    /// Adds or removes watched history for a movie or a set of episodes.
+    func setHistory(ref: MediaRef, videoIds: [String], watched: Bool) {
+        guard isSignedIn else { return }
+        var body: [String: Any] = [:]
+        if ref.type == "movie" {
+            guard ref.id.hasPrefix("tt") else { return }
+            body["movies"] = [["ids": ["imdb": ref.id]]]
+        } else {
+            var seasons: [Int: [Int]] = [:]
+            var showId: String?
+            for v in videoIds {
+                guard let se = AccountHelpers.seasonEpisode(from: v) else { continue }
+                showId = showId ?? String(v.split(separator: ":").first ?? "")
+                seasons[se.0, default: []].append(se.1)
+            }
+            guard let show = showId, show.hasPrefix("tt"), !seasons.isEmpty else { return }
+            let seasonList: [[String: Any]] = seasons.keys.sorted().map { s in
+                ["number": s, "episodes": (seasons[s] ?? []).sorted().map { ["number": $0] }]
+            }
+            body["shows"] = [["ids": ["imdb": show], "seasons": seasonList]]
+        }
+        authorized(watched ? "/sync/history" : "/sync/history/remove", method: "POST", json: body) { _ in }
+    }
+
     // MARK: Import
 
     /// Imports in-progress movies and episodes into Continue Watching.

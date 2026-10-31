@@ -300,11 +300,21 @@ enum PlaybackEvent {
 
 /// Routes local events to whichever accounts are signed in.
 enum AccountSync {
+    /// Only profiles that opted in send activity to connected accounts.
+    static var enabled: Bool { ProfileStore.shared.current.syncAccounts }
+
     static func libraryChanged(_ ref: MediaRef, added: Bool) {
+        guard enabled else { return }
         NuvioAccount.shared.pushLibrary(ref, added: added)
     }
 
+    static func watched(_ ref: MediaRef, videoIds: [String], watched: Bool) {
+        guard enabled else { return }
+        TraktAccount.shared.setHistory(ref: ref, videoIds: videoIds, watched: watched)
+    }
+
     static func playback(_ event: PlaybackEvent, ref: MediaRef, videoId: String, position: Double, duration: Double) {
+        guard enabled else { return }
         let progress = duration > 0 ? position / duration * 100 : 0
         TraktAccount.shared.scrobble(event, ref: ref, videoId: videoId, progress: progress)
         if event != .start {
@@ -314,6 +324,7 @@ enum AccountSync {
 
     /// Quietly pulls progress from connected services (on launch and pull-to-refresh).
     static func pullProgress(completion: (() -> Void)? = nil) {
+        guard enabled else { completion?(); return }
         let group = DispatchGroup()
         if TraktAccount.shared.isSignedIn {
             group.enter()

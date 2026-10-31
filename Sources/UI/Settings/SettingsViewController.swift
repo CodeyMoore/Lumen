@@ -1,12 +1,14 @@
 import UIKit
+import MobileCoreServices
 
-final class SettingsViewController: SettingsTableController {
+final class SettingsViewController: SettingsTableController, UIDocumentPickerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationItem.title = "Settings"
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .accountsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .addonsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .downloadsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .profileChanged, object: nil)
     }
 
     @objc private func changed() { rebuild() }
@@ -26,7 +28,36 @@ final class SettingsViewController: SettingsTableController {
         let downloads = DownloadManager.shared.records
         let active = downloads.filter { $0.state == .downloading }.count
 
+        let compatFooter: String
+        if DeviceCaps.hevcHardwareDecode {
+            compatFooter = "This device can play HEVC in hardware, so Automatic leaves compatibility mode off."
+        } else {
+            compatFooter = "This device can't decode HEVC, AV1 or 10-bit video in hardware, so Automatic prefers H.264 streams at 1080p or lower."
+        }
+        let profiles = ProfileStore.shared
+        var playerRows: [Row] = [
+                .toggle("Gestures", s.gesturesEnabled) { s.gesturesEnabled = $0 },
+                .value("Skip buttons jump", AppSettings.skipIntervalChoices.first { $0.0 == s.skipInterval }?.1 ?? "\(s.skipInterval) seconds") { [weak self] src in
+                    self?.choose("Skip Amount", AppSettings.skipIntervalChoices, current: { $0 == s.skipInterval }, from: src) {
+                        s.skipInterval = $0
+                    }
+                },
+                .toggle("Skip intro, recap & credits button", s.skipSegments) { [weak self] on in
+                    s.skipSegments = on
+                    self?.rebuild()
+                },
+            ]
+        if s.skipSegments {
+            playerRows.append(.toggle("Skip them automatically", s.autoSkipSegments) { s.autoSkipSegments = $0 })
+        }
+
+
         return [
+            Section(title: "Profiles", footer: nil, rows: [
+                .value("Profiles", profiles.profiles.count > 1 ? "\(profiles.current.name) · \(profiles.profiles.count) profiles" : profiles.current.name) { [weak self] _ in
+                    self?.navigationController?.pushViewController(ProfilesViewController(), animated: true)
+                },
+            ]),
             Section(title: "Accounts", footer: nil, rows: [
                 .value("Stremio, Trakt & Nuvio", accounts.isEmpty ? "Not connected" : accounts.joined(separator: ", ")) { [weak self] _ in
                     self?.navigationController?.pushViewController(AccountsViewController(), animated: true)
@@ -38,6 +69,9 @@ final class SettingsViewController: SettingsTableController {
                 },
                 .value("Downloads", active > 0 ? "\(active) in progress" : "\(downloads.count)") { [weak self] _ in
                     self?.navigationController?.pushViewController(DownloadsViewController(), animated: true)
+                },
+                .value("Home Screen", "Reorder & hide rows") { [weak self] _ in
+                    self?.navigationController?.pushViewController(CustomizeHomeViewController(), animated: true)
                 },
             ]),
             Section(title: "Playback", footer: "The VLC engine plays almost every format, including MKV. The iOS player supports AirPlay but not MKV.", rows: [
@@ -54,6 +88,14 @@ final class SettingsViewController: SettingsTableController {
                 .toggle("Prefer last-used addon", s.rememberAddon) { s.rememberAddon = $0 },
                 .toggle("Hide torrent-only streams", s.hideTorrents) { s.hideTorrents = $0 },
             ]),
+            Section(title: "Compatibility", footer: compatFooter, rows: [
+                .value("Compatibility mode", s.compatMode.title + (s.compatMode == .auto ? (s.compatActive ? " (on)" : " (off)") : "")) { [weak self] src in
+                    self?.choose("Compatibility Mode", AppSettings.CompatMode.allCases.map { ($0, $0.title) },
+                                 current: { $0 == s.compatMode }, from: src) { s.compatMode = $0 }
+                },
+                .toggle("Hide HEVC, AV1, 10-bit & HDR streams", s.hideHeavyStreams) { s.hideHeavyStreams = $0 },
+            ]),
+            Section(title: "Player", footer: "Gestures: double-tap the sides to skip, swipe up or down on the left for brightness and on the right for volume, swipe sideways to seek, pinch to fill. Intro, recap and credits times come from IntroDB and AniSkip.", rows: playerRows),
             Section(title: "Subtitles", footer: "Subtitles in your preferred language turn on automatically when an addon provides them.", rows: [
                 .value("Preferred language", langName) { [weak self] src in
                     var options: [(String, String)] = [("", "Off")]
@@ -68,9 +110,54 @@ final class SettingsViewController: SettingsTableController {
                 },
                 .toggle("Background box", s.subtitleBackground) { s.subtitleBackground = $0 },
             ]),
+            Section(title: "Backup", footer: "Backs up addons, profiles, libraries, watched marks, Home layouts and settings. Account sign-ins and downloads aren't included. Backups are saved in Files → On My iPhone/iPad → Lumen → Backups.", rows: [
+                .action("Back Up Now", destructive: false) { [weak self] src in self?.backUp(from: src) },
+                .action("Restore from Backup…", destructive: false) { [weak self] _ in self?.pickBackup() },
+            ]),
             Section(title: "About", footer: nil, rows: [
                 .info("Version", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String),
             ]),
         ]
+    }
+
+    // MARK: Backup
+
+    private func backUp(from source: UIView) {
+        do {
+            let url = try Backup.export()
+            let share = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            if let pop = share.popoverPresentationController {
+                pop.sourceView = source
+                pop.sourceRect = source.bounds
+            }
+            present(share, animated: true)
+        } catch {
+            showAlert("Backup failed", error.localizedDescription)
+        }
+    }
+
+    private func pickBackup() {
+        let picker = UIDocumentPickerViewController(documentTypes: [kUTTypePropertyList as String, kUTTypeXML as String, kUTTypeData as String],
+                                                    in: .import)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let url = urls.first else { return }
+        let confirm = UIAlertController(title: "Restore this backup?",
+                                        message: "Your current addons, profiles, libraries and settings will be replaced.",
+                                        preferredStyle: .alert)
+        confirm.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        confirm.addAction(UIAlertAction(title: "Restore", style: .destructive) { [weak self] _ in
+            do {
+                let summary = try Backup.restore(from: url)
+                self?.rebuild()
+                self?.showAlert("Restored", "\(summary.addons) addons and \(summary.profiles) profile\(summary.profiles == 1 ? "" : "s") restored.")
+            } catch {
+                self?.showAlert("Couldn't restore", error.localizedDescription)
+            }
+        })
+        present(confirm, animated: true)
     }
 }

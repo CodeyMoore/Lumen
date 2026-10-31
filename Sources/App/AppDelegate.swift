@@ -19,6 +19,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         DownloadManager.shared.reconnect()
         AccountSync.pullProgress()
+
+        if ProfileStore.shared.profiles.count > 1 && ProfileStore.shared.askOnLaunch {
+            DispatchQueue.main.async {
+                window.rootViewController?.present(ProfilePickerViewController(dismissible: false), animated: false)
+            }
+        }
         return true
     }
 

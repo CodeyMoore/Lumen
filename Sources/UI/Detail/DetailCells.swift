@@ -12,9 +12,17 @@ final class HeroCell: UITableViewCell {
     private let descriptionLabel = UILabel()
     private let playButton = UIButton(type: .custom)
     private let libraryButton = UIButton(type: .custom)
+    private let trailerButton = UIButton(type: .system)
+    private var trailerCollapsed: NSLayoutConstraint!
 
     var onPlay: (() -> Void)?
     var onLibrary: (() -> Void)?
+    var onTrailer: (() -> Void)? {
+        didSet {
+            trailerButton.isHidden = onTrailer == nil
+            trailerCollapsed.isActive = onTrailer == nil
+        }
+    }
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -53,6 +61,11 @@ final class HeroCell: UITableViewCell {
         playButton.addTarget(self, action: #selector(playTapped), for: .touchUpInside)
         self.style(libraryButton, background: Theme.surfaceHigh)
         libraryButton.addTarget(self, action: #selector(libraryTapped), for: .touchUpInside)
+        trailerButton.setTitle("▶︎  Watch Trailer", for: .normal)
+        trailerButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        trailerButton.tintColor = Theme.accent
+        trailerButton.contentHorizontalAlignment = .left
+        trailerButton.addTarget(self, action: #selector(trailerTapped), for: .touchUpInside)
 
         let textStack = UIStackView(arrangedSubviews: [titleLabel, infoLabel])
         textStack.axis = .vertical
@@ -63,7 +76,7 @@ final class HeroCell: UITableViewCell {
         buttons.spacing = 12
         buttons.distribution = .fillEqually
 
-        for v in [backdrop, gradient, posterView, textStack, buttons, genresLabel, descriptionLabel] as [UIView] {
+        for v in [backdrop, gradient, posterView, textStack, buttons, trailerButton, genresLabel, descriptionLabel] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(v)
         }
@@ -97,7 +110,9 @@ final class HeroCell: UITableViewCell {
             buttons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             buttons.heightAnchor.constraint(equalToConstant: 46),
 
-            genresLabel.topAnchor.constraint(equalTo: buttons.bottomAnchor, constant: 16),
+            trailerButton.topAnchor.constraint(equalTo: buttons.bottomAnchor, constant: 8),
+            trailerButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            genresLabel.topAnchor.constraint(equalTo: trailerButton.bottomAnchor, constant: 8),
             genresLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             genresLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
@@ -106,6 +121,9 @@ final class HeroCell: UITableViewCell {
             descriptionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             descriptionLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
         ])
+        trailerCollapsed = trailerButton.heightAnchor.constraint(equalToConstant: 0)
+        trailerButton.isHidden = true
+        trailerCollapsed.isActive = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -136,6 +154,7 @@ final class HeroCell: UITableViewCell {
 
     @objc private func playTapped() { onPlay?() }
     @objc private func libraryTapped() { onLibrary?() }
+    @objc private func trailerTapped() { onTrailer?() }
 }
 
 final class EpisodeCell: UITableViewCell {

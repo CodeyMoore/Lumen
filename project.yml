@@ -65,6 +65,7 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        LSApplicationQueriesSchemes: [youtube, vlc-x-callback, infuse, nplayer-http, outplayer]
         CFBundleURLTypes:
           - CFBundleURLName: com.codeymoore.lumen.addon
             CFBundleURLSchemes: [stremio, lumen]

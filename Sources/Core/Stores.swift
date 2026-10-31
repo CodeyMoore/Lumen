@@ -23,7 +23,14 @@ final class AddonStore {
 
     private init() { load() }
 
+    /// Reloads from storage (after restoring a backup).
+    func reload() {
+        load()
+        NotificationCenter.default.post(name: .addonsChanged, object: nil)
+    }
+
     private func load() {
+        addons = []
         guard let data = UserDefaults.standard.data(forKey: storageKey),
               let arr = (try? JSONSerialization.jsonObject(with: data, options: [])) as? [[String: Any]] else { return }
         addons = arr.compactMap { d in
@@ -156,7 +163,17 @@ struct WatchState: Codable {
     let position: Double
     let duration: Double
     let updatedAt: Date
+    /// True when this entry is the next episode to watch (nothing played yet).
+    var upNext: Bool? = nil
     var progress: Double { duration > 0 ? min(1, position / duration) : 0 }
+    var isUpNext: Bool { upNext == true }
+
+    /// Short label for Continue Watching ("S1E3" or "Next: S1E3").
+    var shortLabel: String? {
+        let ep = AccountHelpers.episodeLabel(videoId) ?? videoLabel
+        guard isUpNext else { return videoLabel }
+        return ep.map { "Next: \($0)" } ?? "Up next"
+    }
 }
 
 private struct LibraryData: Codable {
@@ -169,16 +186,24 @@ private struct LibraryData: Codable {
 final class LibraryStore {
     static let shared = LibraryStore()
 
-    private var data: LibraryData
-    private let storageKey = "lumen.library.v1"
+    private var data = LibraryData()
+    private var storageKey: String { ProfileStore.shared.key("lumen.library.v1") }
 
-    private init() {
+    private init() { load() }
+
+    private func load() {
         if let raw = UserDefaults.standard.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode(LibraryData.self, from: raw) {
             data = decoded
         } else {
             data = LibraryData()
         }
+    }
+
+    /// Reloads from storage (after switching profile or restoring a backup).
+    func reload() {
+        load()
+        NotificationCenter.default.post(name: .libraryChanged, object: nil)
     }
 
     private func save() {
@@ -274,7 +299,8 @@ final class LibraryStore {
         guard !ref.name.isEmpty else { return }
         if let w = data.watching[ref.id] {
             data.watching[ref.id] = WatchState(ref: ref, videoId: w.videoId, videoLabel: w.videoLabel,
-                                               position: w.position, duration: w.duration, updatedAt: w.updatedAt)
+                                               position: w.position, duration: w.duration, updatedAt: w.updatedAt,
+                                               upNext: w.upNext)
         }
         if let i = data.items.firstIndex(where: { $0.ref.id == ref.id }) {
             data.items[i] = LibraryItem(ref: ref, addedAt: data.items[i].addedAt)
@@ -282,16 +308,40 @@ final class LibraryStore {
         save()
     }
 
-    func markWatched(_ videoId: String) {
-        data.watched.insert(videoId)
+    /// Marks videos watched or unwatched. When the in-progress video gets marked watched,
+    /// Continue Watching moves on to `next` (if given and not already watched).
+    func setWatched(_ videoIds: [String], watched: Bool, ref: MediaRef, next: Video? = nil) {
+        guard !videoIds.isEmpty else { return }
+        let ids = Set(videoIds)
+        if watched {
+            data.watched.formUnion(ids)
+            for id in ids { data.progress[id] = nil }
+            if let w = data.watching[ref.id], ids.contains(w.videoId) {
+                setUpNext(ref: ref, next: next)
+            }
+        } else {
+            data.watched.subtract(ids)
+        }
         save()
+        AccountSync.watched(ref, videoIds: videoIds, watched: watched)
     }
 
-    func updateProgress(ref: MediaRef, videoId: String, label: String?, position: Double, duration: Double) {
+    private func setUpNext(ref: MediaRef, next: Video?) {
+        if let n = next, !data.watched.contains(n.id) {
+            data.watching[ref.id] = WatchState(ref: ref, videoId: n.id, videoLabel: n.longLabel,
+                                               position: 0, duration: 0, updatedAt: Date(), upNext: true)
+        } else {
+            data.watching[ref.id] = nil
+        }
+    }
+
+    func updateProgress(ref: MediaRef, videoId: String, label: String?, position: Double, duration: Double,
+                        next: Video? = nil) {
         if duration > 0 && position / duration >= 0.92 {
             data.progress[videoId] = nil
             data.watched.insert(videoId)
-            if data.watching[ref.id]?.videoId == videoId { data.watching[ref.id] = nil }
+            let w = data.watching[ref.id]
+            if w == nil || w?.videoId == videoId { setUpNext(ref: ref, next: next) }
         } else if position >= 15 {
             data.progress[videoId] = VideoProgress(position: position, duration: duration)
             data.watching[ref.id] = WatchState(ref: ref, videoId: videoId, videoLabel: label,
