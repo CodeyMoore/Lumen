@@ -35,21 +35,23 @@ final class SettingsViewController: SettingsTableController, UIDocumentPickerDel
             compatFooter = "This device can't decode HEVC, AV1 or 10-bit video in hardware, so Automatic prefers H.264 streams at 1080p or lower."
         }
         let profiles = ProfileStore.shared
-        var playerRows: [Row] = [
+        // 0 = don't skip, 1 = show a Skip button, 2 = skip automatically
+        let skipModes: [(Int, String)] = [(0, "Don't skip"), (1, "Show Skip button"), (2, "Skip automatically")]
+        let currentSkipMode = !s.skipSegments ? 0 : (s.autoSkipSegments ? 2 : 1)
+        let playerRows: [Row] = [
                 .toggle("Gestures", s.gesturesEnabled) { s.gesturesEnabled = $0 },
-                .value("Skip buttons jump", AppSettings.skipIntervalChoices.first { $0.0 == s.skipInterval }?.1 ?? "\(s.skipInterval) seconds") { [weak self] src in
-                    self?.choose("Skip Amount", AppSettings.skipIntervalChoices, current: { $0 == s.skipInterval }, from: src) {
+                .value("Rewind & forward by", AppSettings.skipIntervalChoices.first { $0.0 == s.skipInterval }?.1 ?? "\(s.skipInterval) seconds") { [weak self] src in
+                    self?.choose("Rewind & Forward By", AppSettings.skipIntervalChoices, current: { $0 == s.skipInterval }, from: src) {
                         s.skipInterval = $0
                     }
                 },
-                .toggle("Skip intro, recap & credits button", s.skipSegments) { [weak self] on in
-                    s.skipSegments = on
-                    self?.rebuild()
+                .value("Intros, recaps & credits", skipModes.first { $0.0 == currentSkipMode }?.1) { [weak self] src in
+                    self?.choose("Intros, Recaps & Credits", skipModes, current: { $0 == currentSkipMode }, from: src) { mode in
+                        s.skipSegments = mode != 0
+                        s.autoSkipSegments = mode == 2
+                    }
                 },
             ]
-        if s.skipSegments {
-            playerRows.append(.toggle("Skip them automatically", s.autoSkipSegments) { s.autoSkipSegments = $0 })
-        }
 
 
         return [
@@ -95,7 +97,7 @@ final class SettingsViewController: SettingsTableController, UIDocumentPickerDel
                 },
                 .toggle("Hide HEVC, AV1, 10-bit & HDR streams", s.hideHeavyStreams) { s.hideHeavyStreams = $0 },
             ]),
-            Section(title: "Player", footer: "Gestures: double-tap the sides to skip, swipe up or down on the left for brightness and on the right for volume, swipe sideways to seek, pinch to fill. Intro, recap and credits times come from IntroDB and AniSkip.", rows: playerRows),
+            Section(title: "Player", footer: "Gestures: double-tap the left or right side to jump back or forward, swipe up or down on the left for brightness and on the right for volume, swipe sideways to seek, and pinch to fill the screen.\n\nIntros, recaps & credits: \"Show Skip button\" puts a Skip button on screen while an intro, recap or end credits play. \"Skip automatically\" jumps past them for you. This only works for shows whose timings are in the IntroDB and AniSkip databases.", rows: playerRows),
             Section(title: "Subtitles", footer: "Subtitles in your preferred language turn on automatically when an addon provides them.", rows: [
                 .value("Preferred language", langName) { [weak self] src in
                     var options: [(String, String)] = [("", "Off")]
