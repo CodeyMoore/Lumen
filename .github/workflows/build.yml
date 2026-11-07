@@ -3,7 +3,12 @@ name: Build IPA
 on:
   push:
     branches: [main]
-  workflow_dispatch:
+    # Pushes that only change the README (or other Markdown docs) don't start a build.
+    # A push that also changes app files still builds.
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch: # "Run workflow" button for building by hand
+
 
 permissions:
   contents: write
@@ -22,8 +27,8 @@ jobs:
         run: |
           BASE=$(tr -d '[:space:]' < VERSION)
           SINCE=$(git log -1 --format=%H -- VERSION)
-          # Commits marked [skip ci] never build, so they don't use up a number.
-          PATCH=$(git rev-list --count --invert-grep --grep='\[skip ci\]' "$SINCE"..HEAD)
+          # Commits that never build ([skip ci], or only Markdown docs changed) don't use up a number.
+          PATCH=$(git rev-list --count --invert-grep --grep='\[skip ci\]' "$SINCE"..HEAD -- . ':(exclude)*.md' ':(exclude)**/*.md')
           echo "APP_VERSION=$BASE.$PATCH" >> "$GITHUB_ENV"
           echo "APP_BUILD=${{ github.run_number }}" >> "$GITHUB_ENV"
           echo "Building Lumen $BASE.$PATCH (build ${{ github.run_number }})"
