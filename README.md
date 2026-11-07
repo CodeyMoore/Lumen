@@ -33,7 +33,7 @@ It speaks the same addon protocol as Stremio and Nuvio, so any addon manifest UR
 
 ## Getting the IPA
 
-Every push to `main` builds the app with GitHub Actions. Open **Actions → Build IPA**, pick the latest run, and download **JDLite-<version>-ipa** (for example `JDLite-1.6-ipa`) from *Artifacts*.
+Every push to `main` builds the app with GitHub Actions. Open **Actions → Build IPA**, pick the latest run, and download **Lumen-<version>-ipa** (for example `Lumen-1.4.0-ipa`) from *Artifacts*.
 
 The IPA has no Apple signature, only an ad-hoc one. Install it with one of:
 
