@@ -133,7 +133,11 @@ final class SettingsViewController: SettingsTableController, UIDocumentPickerDel
                 .action("Restore from Backup…", destructive: false) { [weak self] _ in self?.pickBackup() },
             ]),
             Section(title: "About", footer: nil, rows: [
-                .info("Version", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String),
+                .info("Version", {
+                    let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+                    let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+                    return "\(v) (build \(b))"
+                }()),
             ]),
         ]
     }

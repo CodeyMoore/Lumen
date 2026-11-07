@@ -13,6 +13,19 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, used to count commits for the version number
+
+      # Version = <VERSION file>.<commits since VERSION last changed>, e.g. 1.4.0, 1.4.1, …
+      # Build number = this workflow's run number, which always goes up.
+      - name: Compute version
+        run: |
+          BASE=$(tr -d '[:space:]' < VERSION)
+          SINCE=$(git log -1 --format=%H -- VERSION)
+          PATCH=$(git rev-list --count "$SINCE"..HEAD)
+          echo "APP_VERSION=$BASE.$PATCH" >> "$GITHUB_ENV"
+          echo "APP_BUILD=${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "Building Lumen $BASE.$PATCH (build ${{ github.run_number }})"
 
       # Xcode 16 still allows an iOS 12.0 deployment target.
       - name: Select Xcode 16
@@ -40,6 +53,7 @@ jobs:
               -destination 'generic/platform=iOS' \
               -derivedDataPath build \
               CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+              MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$APP_BUILD" \
               build
           } 2>&1 | tee build.log | grep -E "error:|\[!\]|\*\* BUILD"
 
@@ -66,13 +80,13 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/Lumen.app Payload/
-          zip -qry Lumen.ipa Payload
-          ls -lh Lumen.ipa
+          zip -qry "Lumen-$APP_VERSION.ipa" Payload
+          ls -lh "Lumen-$APP_VERSION.ipa"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Lumen-ipa
-          path: Lumen.ipa
+          name: Lumen-${{ env.APP_VERSION }}-ipa
+          path: Lumen-${{ env.APP_VERSION }}.ipa
 
       # Saves a build report (errors, signing info, app contents) to the "build-log" branch
       # so it can be read without the Actions UI.
@@ -85,6 +99,7 @@ jobs:
           tail -n 200 build.log > tail.txt || true
           {
             echo "commit: ${GITHUB_SHA}"
+            echo "version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" 2>&1) (build $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist" 2>&1))"
             echo "--- entitlements"
             codesign -d --entitlements - "$APP" 2>&1 || true
             echo "--- signature"
