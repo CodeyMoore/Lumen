@@ -22,7 +22,8 @@ jobs:
         run: |
           BASE=$(tr -d '[:space:]' < VERSION)
           SINCE=$(git log -1 --format=%H -- VERSION)
-          PATCH=$(git rev-list --count "$SINCE"..HEAD)
+          # Commits marked [skip ci] never build, so they don't use up a number.
+          PATCH=$(git rev-list --count --invert-grep --grep='\[skip ci\]' "$SINCE"..HEAD)
           echo "APP_VERSION=$BASE.$PATCH" >> "$GITHUB_ENV"
           echo "APP_BUILD=${{ github.run_number }}" >> "$GITHUB_ENV"
           echo "Building Lumen $BASE.$PATCH (build ${{ github.run_number }})"

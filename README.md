@@ -26,7 +26,7 @@ It speaks the same addon protocol as Stremio and Nuvio, so any addon manifest UR
 
 ## Getting the IPA
 
-Every push to `main` builds the app with GitHub Actions. Open **Actions → Build IPA**, pick the latest run, and download **Lumen-ipa** from *Artifacts*.
+Every push to `main` builds the app with GitHub Actions. Open **Actions → Build IPA**, pick the latest run, and download **Lumen-<version>-ipa** (for example `Lumen-1.4.0-ipa`) from *Artifacts*.
 
 The IPA has no Apple signature, only an ad-hoc one. Install it with one of:
 
@@ -34,7 +34,7 @@ The IPA has no Apple signature, only an ad-hoc one. Install it with one of:
 - **Sideloadly** (Windows/macOS) with your Apple ID — free accounts need re-signing every 7 days.
 - **AltStore** (iOS 12.2+).
 
-Each build is numbered automatically: the version is the number in the `VERSION` file plus how many commits have been made since it last changed (1.4.0, 1.4.1, …), and the build number counts every GitHub build. The artifact and IPA are named after the version, and Settings → About shows which one is installed. To start a new series (for example 1.5.0), change `VERSION` to `1.5`.
+Each build is numbered automatically: the version is the number in the `VERSION` file plus how many commits have been made since it last changed (1.4.0, 1.4.1, …; commits marked `[skip ci]`, which don't build, aren't counted), and the build number counts every GitHub build. The artifact and IPA are named after the version, and Settings → About shows which one is installed. To start a new series (for example 1.5.0), change `VERSION` to `1.5`.
 
 If a build fails, the compile errors are saved to the `build-log` branch (`errors.txt`).
 
