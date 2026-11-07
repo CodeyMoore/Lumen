@@ -1,8 +1,6 @@
-# Lumen
-
 ### ⚠️**Disclaimer**⚠️
 
-**JDLite was developed entirely with Claude.**
+**Lumen was developed entirely with Claude.**
 
 As a result, bugs, unexpected behaviour and other issues may occur. Features may not always work as intended.
 
