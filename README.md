@@ -33,37 +33,9 @@ It speaks the same addon protocol as Stremio and Nuvio, so any addon manifest UR
 
 ## Getting the IPA
 
-Every push to `main` builds the app with GitHub Actions. Open **Actions → Build IPA**, pick the latest run, and download **Lumen-<version>-ipa** (for example `Lumen-1.4.0-ipa`) from *Artifacts*.
+Every push to `main` builds the app with GitHub Actions. Open **Actions → Build IPA**, pick the latest run, and download **JDLite-<version>-ipa** (for example `JDLite-1.6-ipa`) from *Artifacts*.
 
 The IPA has no Apple signature, only an ad-hoc one. Install it with one of:
 
 - **Jailbroken**: install AppSync Unified, then install the IPA with Filza. The IPA carries the entitlements AppSync installs need.
-- **Sideloadly** (Windows/macOS) with your Apple ID — free accounts need re-signing every 7 days.
-- **AltStore** (iOS 12.2+).
-
-Each build is numbered automatically: the version is the number in the `VERSION` file plus how many commits have been made since it last changed (1.4.0, 1.4.1, …; commits marked `[skip ci]`, which don't build, aren't counted), and the build number counts every GitHub build. The artifact and IPA are named after the version, and Settings → About shows which one is installed. To start a new series (for example 1.5.0), change `VERSION` to `1.5`.
-
-If a build fails, the compile errors are saved to the `build-log` branch (`errors.txt`).
-
-## Build on a Mac
-
-```sh
-brew install xcodegen cocoapods
-xcodegen generate
-pod install
-open Lumen.xcworkspace
-```
-
-Use **Xcode 16** — later Xcode versions may not allow an iOS 12 deployment target.
-
-## Project layout
-
-```
-Sources/App        App delegate and tab bar
-Sources/Core       Addon protocol client, models, storage, accounts, downloads
-Sources/UI         Screens: Browse, Discover, Detail, Library, Settings, Player
-Resources          App icon and launch screen
-Signing            Entitlements used for the ad-hoc signature
-project.yml        XcodeGen project definition
-Podfile            MobileVLCKit (VLC playback engine)
-```
+- **Sideload**: Sign the IPA via your preferred sideloading method. whether that be with your own Apple ID (re-sign every 7 days) or with your preferred signing service.
