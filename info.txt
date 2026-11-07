@@ -1,0 +1,63 @@
+commit: 52293bd86df397f61a64b83ec06f871cf7728a0f
+version: 1.5.0 (build 18)
+--- entitlements
+Executable=/Users/runner/work/Lumen/Lumen/build/Build/Products/Release-iphoneos/Lumen.app/Lumen
+[Dict]
+	[Key] application-identifier
+	[Value]
+		[String] com.codeymoore.lumen
+	[Key] get-task-allow
+	[Value]
+		[Bool] true
+	[Key] keychain-access-groups
+	[Value]
+		[Array]
+			[String] com.codeymoore.lumen
+--- signature
+Executable=/Users/runner/work/Lumen/Lumen/build/Build/Products/Release-iphoneos/Lumen.app/Lumen
+Identifier=com.codeymoore.lumen
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=15373 flags=0x2(adhoc) hashes=470+7 location=embedded
+Signature=adhoc
+Info.plist entries=39
+TeamIdentifier=not set
+Sealed Resources version=2 rules=10 files=25
+Internal requirements count=0 size=12
+--- contents
+build/Build/Products/Release-iphoneos/Lumen.app:
+total 4760
+drwxr-xr-x   3 runner  staff       96 Nov  7 09:30 _CodeSignature
+drwxr-xr-x  11 runner  staff      352 Nov  7 09:30 .
+drwxr-xr-x@  8 runner  staff      256 Nov  7 09:30 ..
+-rw-r--r--   1 runner  staff    11274 Nov  7 09:29 AppIcon60x60@2x.png
+-rw-r--r--   1 runner  staff    14256 Nov  7 09:29 AppIcon76x76@2x~ipad.png
+-rw-r--r--   1 runner  staff   437055 Nov  7 09:30 Assets.car
+drwxr-xr-x  19 runner  staff      608 Nov  7 09:30 Frameworks
+-rw-r--r--   1 runner  staff     1898 Nov  7 09:30 Info.plist
+drwxr-xr-x   5 runner  staff      160 Nov  7 09:30 LaunchScreen.storyboardc
+-rwxr-xr-x   1 runner  staff  1958288 Nov  7 09:30 Lumen
+-rw-r--r--   1 runner  staff        8 Nov  7 09:30 PkgInfo
+
+build/Build/Products/Release-iphoneos/Lumen.app/Frameworks:
+total 75752
+drwxr-xr-x  19 runner  staff       608 Nov  7 09:30 .
+drwxr-xr-x  11 runner  staff       352 Nov  7 09:30 ..
+-rwxr-xr-x   1 runner  staff    407712 Nov  7 09:30 libswiftAVFoundation.dylib
+-rwxr-xr-x   1 runner  staff  23157824 Nov  7 09:30 libswiftCore.dylib
+-rwxr-xr-x   1 runner  staff    197312 Nov  7 09:30 libswiftCoreAudio.dylib
+-rwxr-xr-x   1 runner  staff     89584 Nov  7 09:30 libswiftCoreFoundation.dylib
+-rwxr-xr-x   1 runner  staff    502576 Nov  7 09:30 libswiftCoreGraphics.dylib
+-rwxr-xr-x   1 runner  staff    106032 Nov  7 09:30 libswiftCoreImage.dylib
+-rwxr-xr-x   1 runner  staff    188640 Nov  7 09:30 libswiftCoreMedia.dylib
+-rwxr-xr-x   1 runner  staff    272736 Nov  7 09:30 libswiftDarwin.dylib
+-rwxr-xr-x   1 runner  staff   1010288 Nov  7 09:30 libswiftDispatch.dylib
+-rwxr-xr-x   1 runner  staff  10821136 Nov  7 09:30 libswiftFoundation.dylib
+-rwxr-xr-x   1 runner  staff    167504 Nov  7 09:30 libswiftMetal.dylib
+-rwxr-xr-x   1 runner  staff    155456 Nov  7 09:30 libswiftObjectiveC.dylib
+-rwxr-xr-x   1 runner  staff    202016 Nov  7 09:30 libswiftos.dylib
+-rwxr-xr-x   1 runner  staff    109264 Nov  7 09:30 libswiftQuartzCore.dylib
+-rwxr-xr-x   1 runner  staff    971904 Nov  7 09:30 libswiftsimd.dylib
+-rwxr-xr-x   1 runner  staff    397584 Nov  7 09:30 libswiftUIKit.dylib
+drwxr-xr-x   5 runner  staff       160 Nov  7 09:30 MobileVLCKit.framework
+--- min OS
+12.0

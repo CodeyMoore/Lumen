@@ -1,0 +1,1 @@
+[!] Please close any current Xcode sessions and use `Lumen.xcworkspace` for this project from now on.
