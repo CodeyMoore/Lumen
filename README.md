@@ -1,5 +1,14 @@
 # Lumen
 
+### ⚠️**Disclaimer**⚠️
+
+**JDLite was developed entirely with Claude.**
+
+As a result, bugs, unexpected behaviour and other issues may occur. Features may not always work as intended.
+
+Use at your own discretion.
+-- --
+
 A Stremio-addon client for **iOS 12 and later** (iPhone 5s / iPad mini 2 / iPad Air and up), written in Swift + UIKit.
 
 It speaks the same addon protocol as Stremio and Nuvio, so any addon manifest URL you use there works here.
